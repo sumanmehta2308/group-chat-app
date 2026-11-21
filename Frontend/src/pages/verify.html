@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Verify email — Group Chat</title>
+  </head>
+  <body class="auth-page">
+    <main class="auth-wrapper">
+      <div class="brand-header">
+        <div class="brand-logo"><i class="bi bi-whatsapp"></i></div>
+        <span class="brand-name">Group Chat Web</span>
+      </div>
+
+      <div class="auth-card">
+        <h1 class="auth-title">Check your email</h1>
+        <p class="auth-subtitle">
+          We sent a 6-digit verification code to
+          <strong id="displayEmail" class="text-dark">your email</strong>
+        </p>
+
+        <div
+          id="alert-box"
+          class="alert d-none small py-2 px-3 mb-3"
+          role="alert"
+        ></div>
+
+        <form id="otp-form">
+          <div class="otp-grid" id="otp-inputs">
+            <input type="text" inputmode="numeric" maxlength="1" class="form-control otp-box" required />
+            <input type="text" inputmode="numeric" maxlength="1" class="form-control otp-box" required />
+            <input type="text" inputmode="numeric" maxlength="1" class="form-control otp-box" required />
+            <input type="text" inputmode="numeric" maxlength="1" class="form-control otp-box" required />
+            <input type="text" inputmode="numeric" maxlength="1" class="form-control otp-box" required />
+            <input type="text" inputmode="numeric" maxlength="1" class="form-control otp-box" required />
+          </div>
+
+          <button type="submit" id="verifyBtn" class="btn-auth">
+            <span id="btnText">Verify & Continue</span>
+            <span
+              id="btnSpinner"
+              class="spinner-border spinner-border-sm ms-2 d-none"
+              role="status"
+            ></span>
+          </button>
+        </form>
+
+        <div class="text-center mt-3" style="font-size: 13px; color: var(--wa-text-muted);">
+          Didn't receive the code?
+          <button
+            type="button"
+            id="resendBtn"
+            class="btn btn-link p-0 auth-link border-0"
+            style="font-size: 13px;"
+            disabled
+          >
+            Resend in <span id="timer">60</span>s
+          </button>
+        </div>
+      </div>
+
+      <p class="auth-footer">
+        <a href="signup.html" class="auth-link">
+          <i class="bi bi-arrow-left me-1"></i>Use a different email
+        </a>
+      </p>
+    </main>
+
+    <script type="module" src="/src/scripts/verify.js"></script>
+  </body>
+</html>

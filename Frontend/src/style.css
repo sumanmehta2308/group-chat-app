@@ -1,0 +1,203 @@
+:root {
+  --wa-teal: #00a884;
+  --wa-teal-dark: #008f6f;
+  --wa-header-bg: #00a884;
+  --wa-page-bg: #efeae2;
+  --wa-card-bg: #ffffff;
+  --wa-text-primary: #111b21;
+  --wa-text-muted: #667781;
+  --wa-border: #e9edef;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body.auth-page {
+  margin: 0;
+  min-height: 100vh;
+  background-color: var(--wa-page-bg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--wa-text-primary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  padding: 20px 14px;
+}
+
+/* WhatsApp Web Top Green Banner */
+body.auth-page::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 222px;
+  background-color: var(--wa-header-bg);
+  z-index: 0;
+}
+
+.auth-wrapper {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 440px;
+}
+
+/* Brand Header (White text over green banner) */
+.brand-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 22px;
+  color: #ffffff;
+}
+
+.brand-logo {
+  width: 40px;
+  height: 40px;
+  background-color: #ffffff;
+  color: var(--wa-teal);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.35rem;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
+.brand-name {
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+/* Main White Card */
+.auth-card {
+  background-color: var(--wa-card-bg);
+  border-radius: 12px;
+  padding: 32px 28px;
+  box-shadow: 0 17px 50px 0 rgba(11, 20, 26, 0.19),
+    0 12px 15px 0 rgba(11, 20, 26, 0.24);
+  border: 1px solid var(--wa-border);
+}
+
+.auth-title {
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: var(--wa-text-primary);
+  margin-bottom: 6px;
+}
+
+.auth-subtitle {
+  font-size: 0.9rem;
+  color: var(--wa-text-muted);
+  margin-bottom: 22px;
+}
+
+.form-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--wa-text-muted);
+  margin-bottom: 6px;
+}
+
+.form-control {
+  border-radius: 8px;
+  border: 1px solid #d1d7db;
+  padding: 10px 14px;
+  font-size: 0.95rem;
+  color: var(--wa-text-primary);
+}
+
+.form-control:focus {
+  border-color: var(--wa-teal);
+  box-shadow: 0 0 0 0.2rem rgba(0, 168, 132, 0.18);
+}
+
+/* Password Eye Wrapper */
+.password-wrapper {
+  position: relative;
+}
+
+.password-wrapper .form-control {
+  padding-right: 42px;
+}
+
+.password-toggle {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--wa-text-muted);
+  cursor: pointer;
+  padding: 0;
+  font-size: 1.1rem;
+}
+
+.password-toggle:hover {
+  color: var(--wa-text-primary);
+}
+
+/* Primary WhatsApp Button */
+.btn-auth {
+  width: 100%;
+  background-color: var(--wa-teal);
+  color: #ffffff;
+  border: none;
+  border-radius: 24px;
+  padding: 11px 20px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  transition: background-color 0.2s ease, transform 0.1s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-auth:hover:not(:disabled) {
+  background-color: var(--wa-teal-dark);
+}
+
+.btn-auth:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* Links & Footer */
+.auth-link {
+  color: var(--wa-teal);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.auth-link:hover {
+  color: var(--wa-teal-dark);
+  text-decoration: underline;
+}
+
+.auth-footer {
+  text-align: center;
+  margin-top: 20px;
+  font-size: 0.9rem;
+  color: var(--wa-text-muted);
+}
+.otp-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  margin-bottom: 22px;
+}
+.otp-box {
+  text-align: center;
+  font-size: 1.25rem;
+  font-weight: 700;
+  padding: 10px 0;
+  border-radius: 8px;
+}

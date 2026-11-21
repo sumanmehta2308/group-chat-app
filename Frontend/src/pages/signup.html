@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Create account — Group Chat</title>
+  </head>
+  <body class="auth-page">
+    <main class="auth-wrapper">
+      <div class="brand-header">
+        <div class="brand-logo"><i class="bi bi-whatsapp"></i></div>
+        <span class="brand-name">Group Chat Web</span>
+      </div>
+
+      <div class="auth-card">
+        <h1 class="auth-title">Create an account</h1>
+        <p class="auth-subtitle">Join Group Chat and connect instantly</p>
+
+        <div
+          id="alert-box"
+          class="alert d-none small py-2 px-3 mb-3"
+          role="alert"
+        ></div>
+
+        <form id="signup-form" novalidate>
+          <div class="mb-3">
+            <label for="fullName" class="form-label">Full name</label>
+            <input
+              type="text"
+              class="form-control"
+              id="fullName"
+              placeholder="Suman Mehta"
+              autocomplete="name"
+              required
+            />
+            <div class="invalid-feedback">
+              Please enter your full name (min 3 characters).
+            </div>
+          </div>
+
+          <div class="mb-4">
+            <label for="email" class="form-label">Email</label>
+            <input
+              type="email"
+              class="form-control"
+              id="email"
+              placeholder="you@example.com"
+              autocomplete="email"
+              required
+            />
+            <div class="invalid-feedback">
+              Please enter a valid email address.
+            </div>
+          </div>
+
+          <button type="submit" id="submitBtn" class="btn-auth">
+            <span id="btnText">Send Verification OTP</span>
+            <span
+              id="btnSpinner"
+              class="spinner-border spinner-border-sm ms-2 d-none"
+              role="status"
+            ></span>
+          </button>
+        </form>
+      </div>
+
+      <p class="auth-footer">
+        Already have an account?
+        <a href="login.html" class="auth-link">Sign in</a>
+      </p>
+    </main>
+    <script type="module" src="/src/scripts/signup.js"></script>
+  </body>
+</html>

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign in — Expense Tracker</title>
+  </head>
+  <body class="auth-page">
+    <main class="auth-wrapper">
+      <div class="brand-header">
+        <div class="brand-logo">
+          <i class="bi bi-wallet2"></i>
+        </div>
+        <span class="brand-name">Expense Tracker</span>
+      </div>
+      <div class="auth-card">
+        <h1 class="auth-title">Welcome back</h1>
+        <p class="auth-subtitle">
+          Enter your credentials to access your account
+        </p>
+        <div
+          id="alert-box"
+          class="alert d-none small py-2 px-3 mb-3"
+          role="alert"
+        ></div>
+        <form id="login-form" novalidate>
+          <div class="mb-3">
+            <label for="email" class="form-label">Email</label>
+            <input
+              type="email"
+              class="form-control"
+              id="email"
+              placeholder="you@example.com"
+              autocomplete="email"
+              required
+            />
+            <div class="invalid-feedback">Please enter a valid email.</div>
+          </div>
+          <div class="mb-4">
+            <label for="password" class="form-label">Password</label>
+            <div class="password-wrapper">
+              <input
+                type="password"
+                class="form-control"
+                id="password"
+                placeholder="••••••••"
+                autocomplete="current-password"
+                required
+              />
+              <button
+                type="button"
+                class="password-toggle"
+                id="togglePassword"
+                aria-label="Toggle password"
+              >
+                <i class="bi bi-eye" id="toggleIcon"></i>
+              </button>
+              <div class="invalid-feedback">Please enter your password.</div>
+            </div>
+          </div>
+          <button type="submit" id="loginBtn" class="btn-auth">
+            <span id="btnText">Sign in</span>
+            <span
+              id="btnSpinner"
+              class="spinner-border spinner-border-sm ms-2 d-none"
+              role="status"
+            ></span>
+          </button>
+        </form>
+        <div class="text-end mt-2" id="forgotTriggerWrapper">
+          <button
+            type="button"
+            id="showForgotBtn"
+            class="btn btn-link btn-sm text-decoration-none p-0 fw-semibold"
+          >
+            Forgot password?
+          </button>
+        </div>
+        <form id="forgot-form" class="d-none mt-2" novalidate>
+          <div class="mb-3">
+            <label for="forgotEmail" class="form-label">
+              Registered Email Address
+            </label>
+            <input
+              type="email"
+              class="form-control"
+              id="forgotEmail"
+              placeholder="name@example.com"
+              required
+            />
+          </div>
+          <button
+            type="submit"
+            id="forgotSubmitBtn"
+            class="btn btn-primary w-100"
+          >
+            Send Reset Link
+          </button>
+          <div class="text-center mt-3">
+            <button
+              type="button"
+              id="backToLoginBtn"
+              class="btn btn-link btn-sm text-decoration-none p-0"
+            >
+              ← Back to Sign In
+            </button>
+          </div>
+        </form>
+      </div>
+      <p class="auth-footer">
+        Don't have an account?
+        <a href="signup.html" class="auth-link">Sign up</a>
+      </p>
+    </main>
+    <script type="module" src="/src/scripts/login.js"></script>
+  </body>
+</html>
