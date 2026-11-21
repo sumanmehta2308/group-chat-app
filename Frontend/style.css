@@ -1,0 +1,121 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+  background-color: #e5ddd5;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  position: relative;
+}
+
+/* Top green header bar like WhatsApp Web */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 140px;
+  background-color: #00a884;
+  z-index: -1;
+}
+
+.auth-container {
+  background-color: #ffffff;
+  width: 100%;
+  max-width: 420px;
+  padding: 2.2rem;
+  border-radius: 10px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.12);
+  margin: 1rem;
+}
+
+.auth-header {
+  text-align: center;
+  margin-bottom: 1.8rem;
+}
+
+.auth-header h2 {
+  color: #111b21;
+  font-size: 1.6rem;
+  margin-bottom: 0.4rem;
+}
+
+.auth-header p {
+  color: #667781;
+  font-size: 0.9rem;
+}
+
+.form-group {
+  margin-bottom: 1.2rem;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: #3b4a54;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid #d1d7db;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.form-group input:focus {
+  border-color: #00a884;
+}
+
+.btn-primary {
+  width: 100%;
+  padding: 0.8rem;
+  background-color: #00a884;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  margin-top: 0.5rem;
+}
+
+.btn-primary:hover {
+  background-color: #008f6f;
+}
+
+.auth-footer {
+  text-align: center;
+  margin-top: 1.5rem;
+  font-size: 0.9rem;
+  color: #667781;
+}
+
+.auth-footer a {
+  color: #00a884;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.auth-footer a:hover {
+  text-decoration: underline;
+}
+
+.error-msg {
+  color: #ea0038;
+  font-size: 0.85rem;
+  margin-top: 0.3rem;
+  display: none;
+}
