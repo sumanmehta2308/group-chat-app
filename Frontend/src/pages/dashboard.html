@@ -19,14 +19,6 @@
           <div class="d-flex align-items-center gap-2">
             <button
               type="button"
-              class="icon-btn"
-              id="newGroupBtn"
-              title="New Group"
-            >
-              <i class="bi bi-people-fill"></i>
-            </button>
-            <button
-              type="button"
               class="icon-btn text-danger"
               id="logoutBtn"
               title="Logout"
@@ -42,13 +34,26 @@
             <input
               type="text"
               id="chatSearchInput"
-              placeholder="Search or start new chat"
+              placeholder="Search messages"
               autocomplete="off"
             />
           </div>
         </div>
 
-        <div class="chat-list" id="chatList"></div>
+        <div class="chat-list" id="chatList">
+          <div class="chat-item active" id="globalRoomItem">
+            <div class="chat-avatar">GC</div>
+            <div class="chat-item-meta">
+              <div class="chat-item-top">
+                <span class="chat-item-name">Group Chat Room</span>
+                <span class="chat-item-time" id="sidebarLastTime"></span>
+              </div>
+              <div class="chat-item-preview" id="sidebarLastPreview">
+                Click to view messages
+              </div>
+            </div>
+          </div>
+        </div>
       </aside>
 
       <section class="chat-main" id="chatMain">
@@ -62,27 +67,19 @@
             >
               <i class="bi bi-arrow-left"></i>
             </button>
-            <div class="chat-avatar" id="activeChatAvatar">GC</div>
+            <div class="chat-avatar">GC</div>
             <div>
-              <h2 class="chat-title mb-0" id="activeChatName">NIT Raipur MCA Squad</h2>
+              <h2 class="chat-title mb-0">Group Chat Room</h2>
               <p class="chat-subtitle mb-0" id="activeChatStatus">
-                Suman, Rahul, Priya, You
+                All verified members
               </p>
             </div>
-          </div>
-          <div class="d-flex align-items-center gap-2">
-            <button type="button" class="icon-btn" title="Search messages">
-              <i class="bi bi-search"></i>
-            </button>
-            <button type="button" class="icon-btn" title="Group info">
-              <i class="bi bi-three-dots-vertical"></i>
-            </button>
           </div>
         </header>
 
         <div class="messages-viewport" id="messagesViewport">
           <div class="date-divider">
-            <span>TODAY</span>
+            <span>GROUP MESSAGES</span>
           </div>
           <div id="messagesContainer" class="messages-stack"></div>
         </div>
@@ -97,12 +94,6 @@
         </button>
 
         <footer class="chat-composer">
-          <button type="button" class="icon-btn" id="emojiBtn" title="Emoji">
-            <i class="bi bi-emoji-smile"></i>
-          </button>
-          <button type="button" class="icon-btn" id="attachBtn" title="Attach">
-            <i class="bi bi-paperclip"></i>
-          </button>
           <form id="messageForm" class="composer-form">
             <input
               type="text"

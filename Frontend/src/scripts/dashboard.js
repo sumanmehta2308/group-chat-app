@@ -1,97 +1,29 @@
 import "../utils/setup.js";
 import { getCurrentUser, logoutUser } from "../api/authApi.js";
+import { fetchAllMessages, postChatMessage } from "../api/chatApi.js";
 
 const currentUserAvatar = document.getElementById("currentUserAvatar");
 const currentUserName = document.getElementById("currentUserName");
-const chatListEl = document.getElementById("chatList");
 const chatSearchInput = document.getElementById("chatSearchInput");
-const activeChatAvatar = document.getElementById("activeChatAvatar");
-const activeChatName = document.getElementById("activeChatName");
-const activeChatStatus = document.getElementById("activeChatStatus");
+const sidebarLastTime = document.getElementById("sidebarLastTime");
+const sidebarLastPreview = document.getElementById("sidebarLastPreview");
 const messagesViewport = document.getElementById("messagesViewport");
 const messagesContainer = document.getElementById("messagesContainer");
 const messageForm = document.getElementById("messageForm");
 const messageInput = document.getElementById("messageInput");
+const sendBtn = document.getElementById("sendBtn");
 const scrollBottomBtn = document.getElementById("scrollBottomBtn");
 const logoutBtn = document.getElementById("logoutBtn");
 const mobileBackBtn = document.getElementById("mobileBackBtn");
+const globalRoomItem = document.getElementById("globalRoomItem");
 const chatAppShell = document.querySelector(".chat-app-shell");
 
-let currentUser = { id: 1, name: "Suman Mehta", email: "suman@example.com" };
+let currentUser = null;
+let allMessages = [];
 
-const rooms = [
-  {
-    id: "group-1",
-    name: "NIT Raipur MCA Squad",
-    initials: "NR",
-    members: "Suman, Rahul, Priya, Ankit, You",
-    messages: [
-      {
-        id: 1,
-        sender: "Rahul Verma",
-        text: "Hey everyone! Welcome to the group chat.",
-        time: "10:15 AM",
-        outgoing: false,
-      },
-      {
-        id: 2,
-        sender: "Priya Sharma",
-        text: "UI looks super clean just like WhatsApp Web!",
-        time: "10:17 AM",
-        outgoing: false,
-      },
-      {
-        id: 3,
-        sender: "You",
-        text: "Thanks! Next we will wire up Socket.io for live messaging.",
-        time: "10:18 AM",
-        outgoing: true,
-      },
-    ],
-  },
-  {
-    id: "group-2",
-    name: "Placement Prep 2026",
-    initials: "PP",
-    members: "Suman, Aman, Neha, You",
-    messages: [
-      {
-        id: 1,
-        sender: "Aman Gupta",
-        text: "Did anyone solve today's LeetCode POTD?",
-        time: "09:40 AM",
-        outgoing: false,
-      },
-      {
-        id: 2,
-        sender: "You",
-        text: "Yes, solved it using Dynamic Programming in O(n) space.",
-        time: "09:45 AM",
-        outgoing: true,
-      },
-    ],
-  },
-  {
-    id: "dm-1",
-    name: "Ankit Kumar",
-    initials: "AK",
-    members: "Online",
-    messages: [
-      {
-        id: 1,
-        sender: "Ankit Kumar",
-        text: "Bro, send me the backend repo link once pushed.",
-        time: "Yesterday",
-        outgoing: false,
-      },
-    ],
-  },
-];
-
-let activeRoomId = rooms[0].id;
-
-function formatCurrentTime() {
-  return new Date().toLocaleTimeString([], {
+function formatTimestamp(isoString) {
+  const date = isoString ? new Date(isoString) : new Date();
+  return date.toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -103,68 +35,60 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-function scrollToBottom(force = true) {
-  if (force) {
-    messagesViewport.scrollTop = messagesViewport.scrollHeight;
-    scrollBottomBtn.classList.add("d-none");
+function scrollToBottom() {
+  messagesViewport.scrollTop = messagesViewport.scrollHeight;
+  scrollBottomBtn.classList.add("d-none");
+}
+
+function updateSidebarPreview() {
+  if (allMessages.length === 0) {
+    sidebarLastPreview.textContent = "No messages yet. Say hi!";
+    sidebarLastTime.textContent = "";
+    return;
   }
+
+  const last = allMessages[allMessages.length - 1];
+  const isOutgoing = last.senderId === currentUser.id;
+  const senderPrefix = isOutgoing
+    ? "You: "
+    : `${last.sender?.name || "User"}: `;
+  sidebarLastPreview.textContent = `${senderPrefix}${last.content}`;
+  sidebarLastTime.textContent = formatTimestamp(last.createdAt);
 }
 
-function renderSidebar(filterText = "") {
+function renderMessages(filterText = "") {
   const query = filterText.trim().toLowerCase();
-  const filteredRooms = rooms.filter((room) =>
-    room.name.toLowerCase().includes(query)
-  );
+  const filtered = query
+    ? allMessages.filter(
+        (m) =>
+          m.content.toLowerCase().includes(query) ||
+          (m.sender?.name || "").toLowerCase().includes(query)
+      )
+    : allMessages;
 
-  chatListEl.innerHTML = filteredRooms
-    .map((room) => {
-      const lastMsg = room.messages[room.messages.length - 1];
-      const preview = lastMsg
-        ? `${lastMsg.outgoing ? "You: " : `${lastMsg.sender}: `}${lastMsg.text}`
-        : "No messages yet";
-      const time = lastMsg ? lastMsg.time : "";
-      const isActive = room.id === activeRoomId ? "active" : "";
+  if (filtered.length === 0) {
+    messagesContainer.innerHTML = `
+      <div class="text-center text-muted small my-4">
+        ${
+          query
+            ? "No matching messages found."
+            : "No messages yet. Start the conversation!"
+        }
+      </div>
+    `;
+    return;
+  }
 
-      return `
-        <div class="chat-item ${isActive}" data-room-id="${room.id}">
-          <div class="chat-avatar">${escapeHtml(room.initials)}</div>
-          <div class="chat-item-meta">
-            <div class="chat-item-top">
-              <span class="chat-item-name">${escapeHtml(room.name)}</span>
-              <span class="chat-item-time">${escapeHtml(time)}</span>
-            </div>
-            <div class="chat-item-preview">${escapeHtml(preview)}</div>
-          </div>
-        </div>
-      `;
-    })
-    .join("");
-
-  document.querySelectorAll(".chat-item").forEach((item) => {
-    item.addEventListener("click", () => {
-      activeRoomId = item.dataset.roomId;
-      chatAppShell.classList.add("mobile-chat-open");
-      renderSidebar(chatSearchInput.value);
-      renderActiveChat();
-    });
-  });
-}
-
-function renderActiveChat() {
-  const room = rooms.find((r) => r.id === activeRoomId);
-  if (!room) return;
-
-  activeChatAvatar.textContent = room.initials;
-  activeChatName.textContent = room.name;
-  activeChatStatus.textContent = room.members;
-
-  messagesContainer.innerHTML = room.messages
+  messagesContainer.innerHTML = filtered
     .map((msg) => {
-      const rowClass = msg.outgoing ? "outgoing" : "incoming";
-      const senderHtml = !msg.outgoing
-        ? `<div class="msg-sender">${escapeHtml(msg.sender)}</div>`
+      const isOutgoing = msg.senderId === currentUser.id;
+      const rowClass = isOutgoing ? "outgoing" : "incoming";
+      const senderHtml = !isOutgoing
+        ? `<div class="msg-sender">${escapeHtml(
+            msg.sender?.name || "Unknown"
+          )}</div>`
         : "";
-      const tickHtml = msg.outgoing
+      const tickHtml = isOutgoing
         ? `<i class="bi bi-check2-all msg-status-icon"></i>`
         : "";
 
@@ -172,9 +96,9 @@ function renderActiveChat() {
         <div class="msg-row ${rowClass}">
           <div class="msg-bubble">
             ${senderHtml}
-            <span class="msg-text">${escapeHtml(msg.text)}</span>
+            <span class="msg-text">${escapeHtml(msg.content)}</span>
             <span class="msg-meta">
-              <span>${escapeHtml(msg.time)}</span>
+              <span>${escapeHtml(formatTimestamp(msg.createdAt))}</span>
               ${tickHtml}
             </span>
           </div>
@@ -183,28 +107,42 @@ function renderActiveChat() {
     })
     .join("");
 
-  scrollToBottom(true);
+  scrollToBottom();
 }
 
-messageForm.addEventListener("submit", (e) => {
+async function loadMessages() {
+  try {
+    const res = await fetchAllMessages();
+    if (res.success) {
+      allMessages = res.messages || [];
+      updateSidebarPreview();
+      renderMessages(chatSearchInput.value);
+    }
+  } catch (err) {
+    console.error("Failed to load messages:", err.message);
+  }
+}
+
+messageForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const text = messageInput.value.trim();
-  if (!text) return;
+  const content = messageInput.value.trim();
+  if (!content) return;
 
-  const room = rooms.find((r) => r.id === activeRoomId);
-  if (!room) return;
-
-  room.messages.push({
-    id: Date.now(),
-    sender: "You",
-    text,
-    time: formatCurrentTime(),
-    outgoing: true,
-  });
-
-  messageInput.value = "";
-  renderActiveChat();
-  renderSidebar(chatSearchInput.value);
+  try {
+    sendBtn.disabled = true;
+    const res = await postChatMessage(content);
+    if (res.success && res.message) {
+      allMessages.push(res.message);
+      messageInput.value = "";
+      updateSidebarPreview();
+      renderMessages(chatSearchInput.value);
+    }
+  } catch (err) {
+    alert(err.message || "Failed to send message");
+  } finally {
+    sendBtn.disabled = false;
+    messageInput.focus();
+  }
 });
 
 messagesViewport.addEventListener("scroll", () => {
@@ -215,11 +153,17 @@ messagesViewport.addEventListener("scroll", () => {
   scrollBottomBtn.classList.toggle("d-none", distanceFromBottom < 120);
 });
 
-scrollBottomBtn.addEventListener("click", () => scrollToBottom(true));
+scrollBottomBtn.addEventListener("click", scrollToBottom);
 
 chatSearchInput.addEventListener("input", (e) => {
-  renderSidebar(e.target.value);
+  renderMessages(e.target.value);
 });
+
+if (globalRoomItem) {
+  globalRoomItem.addEventListener("click", () => {
+    chatAppShell.classList.add("mobile-chat-open");
+  });
+}
 
 if (mobileBackBtn) {
   mobileBackBtn.addEventListener("click", () => {
@@ -238,26 +182,24 @@ logoutBtn.addEventListener("click", async () => {
 });
 
 async function initDashboard() {
-  const storedUser = localStorage.getItem("user");
-  if (storedUser) {
-    currentUser = JSON.parse(storedUser);
-  } else {
-    try {
-      const res = await getCurrentUser();
-      if (res.success && res.user) {
-        currentUser = res.user;
-      }
-    } catch {
+  try {
+    const res = await getCurrentUser();
+    if (res.success && res.user) {
+      currentUser = res.user;
+      localStorage.setItem("user", JSON.stringify(res.user));
+    } else {
       window.location.replace("/src/pages/login.html");
       return;
     }
+  } catch {
+    window.location.replace("/src/pages/login.html");
+    return;
   }
 
   currentUserName.textContent = currentUser.name;
   currentUserAvatar.textContent = currentUser.name.charAt(0).toUpperCase();
 
-  renderSidebar();
-  renderActiveChat();
+  await loadMessages();
 }
 
 initDashboard();

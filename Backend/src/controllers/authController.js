@@ -2,7 +2,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { Op } from "sequelize";
-import User from "../models/User.js";
+import User from "../models/user.js";
 import { sendOtpEmail, sendResetPasswordEmail } from "../utils/emailService.js";
 
 const generateToken = (userId) => {
