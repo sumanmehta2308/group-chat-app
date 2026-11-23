@@ -18,6 +18,7 @@ export const sendMessage = async (req, res, next) => {
     });
 
     const fullMessage = await Message.findByPk(newMessage.id, {
+      attributes: ["id", "senderId", "content", "createdAt"],
       include: [
         {
           model: User,
@@ -39,6 +40,7 @@ export const sendMessage = async (req, res, next) => {
 export const getMessages = async (req, res, next) => {
   try {
     const messages = await Message.findAll({
+      attributes: ["id", "senderId", "content", "createdAt"],
       include: [
         {
           model: User,
