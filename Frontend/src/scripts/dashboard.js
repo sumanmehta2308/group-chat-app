@@ -1,9 +1,13 @@
 import "../utils/setup.js";
+import { io } from "socket.io-client";
 import { getCurrentUser, logoutUser } from "../api/authApi.js";
 import { fetchAllMessages, postChatMessage } from "../api/chatApi.js";
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+
 const currentUserAvatar = document.getElementById("currentUserAvatar");
 const currentUserName = document.getElementById("currentUserName");
+const activeChatStatus = document.getElementById("activeChatStatus");
 const chatSearchInput = document.getElementById("chatSearchInput");
 const sidebarLastTime = document.getElementById("sidebarLastTime");
 const sidebarLastPreview = document.getElementById("sidebarLastPreview");
@@ -20,6 +24,8 @@ const chatAppShell = document.querySelector(".chat-app-shell");
 
 let currentUser = null;
 let allMessages = [];
+let socket = null;
+let typingTimeout = null;
 
 function formatTimestamp(isoString) {
   const date = isoString ? new Date(isoString) : new Date();
@@ -110,6 +116,41 @@ function renderMessages(filterText = "") {
   scrollToBottom();
 }
 
+function appendIncomingMessage(message) {
+  const alreadyExists = allMessages.some((m) => m.id === message.id);
+  if (alreadyExists) return;
+
+  allMessages.push(message);
+  updateSidebarPreview();
+  renderMessages(chatSearchInput.value);
+}
+
+function connectSocket() {
+  const token = localStorage.getItem("token");
+  socket = io(API_BASE_URL, {
+    auth: { token },
+    withCredentials: true,
+  });
+
+  socket.on("new_message", (message) => {
+    appendIncomingMessage(message);
+  });
+
+  socket.on("user_typing", (data) => {
+    if (activeChatStatus && data.userId !== currentUser.id) {
+      activeChatStatus.textContent = `${data.name} is typing...`;
+      activeChatStatus.classList.add("text-success", "fw-semibold");
+    }
+  });
+
+  socket.on("user_stop_typing", () => {
+    if (activeChatStatus) {
+      activeChatStatus.textContent = "All verified members";
+      activeChatStatus.classList.remove("text-success", "fw-semibold");
+    }
+  });
+}
+
 async function loadMessages() {
   try {
     const res = await fetchAllMessages();
@@ -123,6 +164,15 @@ async function loadMessages() {
   }
 }
 
+messageInput.addEventListener("input", () => {
+  if (!socket) return;
+  socket.emit("typing");
+  clearTimeout(typingTimeout);
+  typingTimeout = setTimeout(() => {
+    socket.emit("stop_typing");
+  }, 1200);
+});
+
 messageForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const content = messageInput.value.trim();
@@ -130,12 +180,12 @@ messageForm.addEventListener("submit", async (e) => {
 
   try {
     sendBtn.disabled = true;
+    if (socket) socket.emit("stop_typing");
+
     const res = await postChatMessage(content);
     if (res.success && res.message) {
-      allMessages.push(res.message);
+      appendIncomingMessage(res.message);
       messageInput.value = "";
-      updateSidebarPreview();
-      renderMessages(chatSearchInput.value);
     }
   } catch (err) {
     alert(err.message || "Failed to send message");
@@ -161,17 +211,18 @@ chatSearchInput.addEventListener("input", (e) => {
 
 if (globalRoomItem) {
   globalRoomItem.addEventListener("click", () => {
-    chatAppShell.classList.add("mobile-chat-open");
+    chatAppShell.classList.remove("show-sidebar");
   });
 }
 
 if (mobileBackBtn) {
   mobileBackBtn.addEventListener("click", () => {
-    chatAppShell.classList.remove("mobile-chat-open");
+    chatAppShell.classList.add("show-sidebar");
   });
 }
 
 logoutBtn.addEventListener("click", async () => {
+  if (socket) socket.disconnect();
   try {
     await logoutUser();
   } catch {
@@ -200,6 +251,7 @@ async function initDashboard() {
   currentUserAvatar.textContent = currentUser.name.charAt(0).toUpperCase();
 
   await loadMessages();
+  connectSocket();
 }
 
 initDashboard();

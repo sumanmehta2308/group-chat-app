@@ -6,17 +6,17 @@
     <title>Group Chat Web</title>
   </head>
   <body class="chat-body">
-    <div class="chat-app-shell">
+    <div class="chat-app-shell" id="chatAppShell">
       <aside class="chat-sidebar" id="chatSidebar">
         <header class="sidebar-header">
-          <div class="d-flex align-items-center gap-2">
+          <div class="d-flex align-items-center gap-2 overflow-hidden">
             <div class="user-avatar" id="currentUserAvatar">U</div>
-            <div>
-              <div class="fw-semibold text-dark small" id="currentUserName">Loading...</div>
+            <div class="overflow-hidden">
+              <div class="fw-semibold text-dark small text-truncate" id="currentUserName">Loading...</div>
               <div class="text-success" style="font-size: 11px;">● Online</div>
             </div>
           </div>
-          <div class="d-flex align-items-center gap-2">
+          <div class="d-flex align-items-center gap-1">
             <button
               type="button"
               class="icon-btn text-danger"
@@ -58,19 +58,19 @@
 
       <section class="chat-main" id="chatMain">
         <header class="chat-header">
-          <div class="d-flex align-items-center gap-2">
+          <div class="d-flex align-items-center gap-2 overflow-hidden">
             <button
               type="button"
-              class="icon-btn d-md-none"
+              class="icon-btn sidebar-toggle-btn"
               id="mobileBackBtn"
-              aria-label="Back"
+              aria-label="Toggle Sidebar"
             >
-              <i class="bi bi-arrow-left"></i>
+              <i class="bi bi-list"></i>
             </button>
             <div class="chat-avatar">GC</div>
-            <div>
-              <h2 class="chat-title mb-0">Group Chat Room</h2>
-              <p class="chat-subtitle mb-0" id="activeChatStatus">
+            <div class="overflow-hidden">
+              <h2 class="chat-title mb-0 text-truncate">Group Chat Room</h2>
+              <p class="chat-subtitle mb-0 text-truncate" id="activeChatStatus">
                 All verified members
               </p>
             </div>

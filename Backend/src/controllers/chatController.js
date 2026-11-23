@@ -1,5 +1,6 @@
 import Message from "../models/message.js";
 import User from "../models/user.js";
+import { getIO } from "../socket/socketHandler.js";
 
 export const sendMessage = async (req, res, next) => {
   try {
@@ -27,6 +28,9 @@ export const sendMessage = async (req, res, next) => {
         },
       ],
     });
+
+    const io = getIO();
+    io.to("global_group").emit("new_message", fullMessage);
 
     res.status(201).json({
       success: true,

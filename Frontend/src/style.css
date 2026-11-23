@@ -569,26 +569,51 @@ body.chat-body::before {
   border-radius: 3px;
 }
 
-@media (max-width: 767px) {
+.sidebar-toggle-btn {
+  display: none;
+}
+
+@media (max-width: 960px) {
   .chat-sidebar {
+    width: 220px;
+    min-width: 200px;
+  }
+
+  .messages-viewport {
+    padding: 14px 4%;
+  }
+
+  .msg-bubble {
+    max-width: 78%;
+  }
+}
+
+@media (max-width: 600px) {
+  .sidebar-toggle-btn {
+    display: inline-flex;
+  }
+
+  .chat-sidebar {
+    display: none;
     width: 100%;
     max-width: 100%;
+    min-width: 0;
   }
 
   .chat-main {
-    display: none;
-  }
-
-  .chat-app-shell.mobile-chat-open .chat-sidebar {
-    display: none;
-  }
-
-  .chat-app-shell.mobile-chat-open .chat-main {
     display: flex;
     width: 100%;
   }
 
+  .chat-app-shell.show-sidebar .chat-sidebar {
+    display: flex;
+  }
+
+  .chat-app-shell.show-sidebar .chat-main {
+    display: none;
+  }
+
   .msg-bubble {
-    max-width: 84%;
+    max-width: 85%;
   }
 }
