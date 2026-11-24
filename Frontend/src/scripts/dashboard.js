@@ -31,11 +31,20 @@ const globalRoomItem = document.getElementById("globalRoomItem");
 const chatAppShell = document.querySelector(".chat-app-shell");
 
 let currentUser = null;
-let allUsers = [];
+let recentContacts = [];
+let displayedUsers = [];
 let allMessages = [];
 let selectedUser = null;
+let currentRoomId = "global_group";
 let socket = null;
 let typingTimeout = null;
+let searchDebounce = null;
+
+function createPrivateRoomId(userId1, userId2) {
+  const first = Math.min(Number(userId1), Number(userId2));
+  const second = Math.max(Number(userId1), Number(userId2));
+  return `private_${first}_${second}`;
+}
 
 function formatTimestamp(isoString) {
   const date = isoString ? new Date(isoString) : new Date();
@@ -58,29 +67,54 @@ function scrollToBottom() {
 
 function getDefaultStatusText() {
   if (selectedUser) {
-    return selectedUser.email;
+    return `${selectedUser.email} • Room: ${currentRoomId}`;
   }
   return currentUser
     ? `Connected as ${currentUser.name}`
     : "All verified members";
 }
 
-function renderUsersSidebar(filterText = "") {
-  const query = filterText.trim().toLowerCase();
-  const filteredUsers = query
-    ? allUsers.filter(
-        (u) =>
-          u.name.toLowerCase().includes(query) ||
-          u.email.toLowerCase().includes(query)
-      )
-    : allUsers;
+function getMessageTickHtml(msg) {
+  if (msg.isRead) {
+    return `<i class="bi bi-check2-all msg-status-icon seen" title="Seen"></i>`;
+  }
+  if (msg.isDelivered) {
+    return `<i class="bi bi-check2-all msg-status-icon" title="Delivered"></i>`;
+  }
+  return `<i class="bi bi-check2 msg-status-icon" title="Sent"></i>`;
+}
 
+function renderUsersSidebar() {
+  const isSearching = chatSearchInput.value.trim().length > 0;
   globalRoomItem.classList.toggle("active", selectedUser === null);
 
-  usersListContainer.innerHTML = filteredUsers
+  if (displayedUsers.length === 0 && isSearching) {
+    usersListContainer.innerHTML = `
+      <div class="text-center text-muted small py-3 px-2">
+        No registered user found for "${escapeHtml(
+          chatSearchInput.value.trim()
+        )}"
+      </div>
+    `;
+    return;
+  }
+
+  usersListContainer.innerHTML = displayedUsers
     .map((user) => {
       const isActive = selectedUser && selectedUser.id === user.id;
       const initial = user.name.charAt(0).toUpperCase();
+      const unreadCount = !isActive && user.unreadCount ? user.unreadCount : 0;
+      const badgeHtml =
+        unreadCount > 0
+          ? `<span class="unread-badge">${unreadCount}</span>`
+          : "";
+      const timeHtml = user.lastMessageTime
+        ? `<span class="chat-item-time">${escapeHtml(
+            formatTimestamp(user.lastMessageTime)
+          )}</span>`
+        : "";
+      const previewText = user.lastMessage || user.email;
+
       return `
         <div class="chat-item ${isActive ? "active" : ""}" data-user-id="${
         user.id
@@ -89,8 +123,14 @@ function renderUsersSidebar(filterText = "") {
           <div class="chat-item-meta">
             <div class="chat-item-top">
               <span class="chat-item-name">${escapeHtml(user.name)}</span>
+              ${timeHtml}
             </div>
-            <div class="chat-item-preview">${escapeHtml(user.email)}</div>
+            <div class="d-flex align-items-center justify-content-between">
+              <div class="chat-item-preview ${
+                unreadCount > 0 ? "fw-semibold text-dark" : ""
+              }">${escapeHtml(previewText)}</div>
+              ${badgeHtml}
+            </div>
           </div>
         </div>
       `;
@@ -100,12 +140,51 @@ function renderUsersSidebar(filterText = "") {
   usersListContainer.querySelectorAll(".chat-item").forEach((item) => {
     item.addEventListener("click", () => {
       const userId = Number(item.dataset.userId);
-      const user = allUsers.find((u) => u.id === userId);
+      const user = displayedUsers.find((u) => u.id === userId);
       if (user) {
         selectPersonalChat(user);
       }
     });
   });
+}
+
+function upsertRecentContact(
+  user,
+  lastMessageObj = null,
+  incrementUnread = false
+) {
+  if (!user) return;
+  const existingIndex = recentContacts.findIndex((u) => u.id === user.id);
+
+  if (existingIndex !== -1) {
+    const existing = recentContacts[existingIndex];
+    const updated = {
+      ...existing,
+      unreadCount: incrementUnread ? (existing.unreadCount || 0) + 1 : 0,
+      lastMessage: lastMessageObj
+        ? lastMessageObj.content
+        : existing.lastMessage,
+      lastMessageTime: lastMessageObj
+        ? lastMessageObj.createdAt
+        : existing.lastMessageTime,
+    };
+    recentContacts.splice(existingIndex, 1);
+    recentContacts.unshift(updated);
+  } else {
+    recentContacts.unshift({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      unreadCount: incrementUnread ? 1 : 0,
+      lastMessage: lastMessageObj ? lastMessageObj.content : user.email,
+      lastMessageTime: lastMessageObj ? lastMessageObj.createdAt : null,
+    });
+  }
+
+  if (!chatSearchInput.value.trim()) {
+    displayedUsers = [...recentContacts];
+    renderUsersSidebar();
+  }
 }
 
 function updateGroupSidebarPreview() {
@@ -145,9 +224,7 @@ function renderMessages() {
               msg.sender?.name || "Unknown"
             )}</div>`
           : "";
-      const tickHtml = isOutgoing
-        ? `<i class="bi bi-check2-all msg-status-icon"></i>`
-        : "";
+      const tickHtml = isOutgoing ? getMessageTickHtml(msg) : "";
 
       return `
         <div class="msg-row ${rowClass}">
@@ -179,6 +256,15 @@ function isMessageForActiveChat(message) {
   );
 }
 
+function emitMarkAsRead(roomId, senderId) {
+  if (socket && socket.connected && roomId && senderId) {
+    socket.emit("mark_as_read", {
+      roomId,
+      senderId: Number(senderId),
+    });
+  }
+}
+
 function appendIncomingMessage(message) {
   if (!isMessageForActiveChat(message)) return;
 
@@ -188,10 +274,32 @@ function appendIncomingMessage(message) {
   allMessages.push(message);
   updateGroupSidebarPreview();
   renderMessages();
+
+  if (selectedUser) {
+    upsertRecentContact(selectedUser, message, false);
+    if (message.senderId === selectedUser.id) {
+      emitMarkAsRead(currentRoomId, selectedUser.id);
+    }
+  }
+}
+
+function leavePreviousPrivateRoom() {
+  if (
+    socket &&
+    socket.connected &&
+    currentRoomId &&
+    currentRoomId !== "global_group"
+  ) {
+    socket.emit("leave_room", { roomId: currentRoomId });
+  }
 }
 
 async function selectGroupChat() {
+  sessionStorage.removeItem("activeChatUserId");
+  leavePreviousPrivateRoom();
+
   selectedUser = null;
+  currentRoomId = "global_group";
   activeChatAvatar.textContent = "GC";
   activeChatTitle.textContent = "Group Chat Room";
   activeChatStatus.textContent = getDefaultStatusText();
@@ -199,24 +307,36 @@ async function selectGroupChat() {
   chatModeLabel.textContent = "GROUP MESSAGES";
   chatAppShell.classList.remove("show-sidebar");
 
-  renderUsersSidebar(chatSearchInput.value);
+  renderUsersSidebar();
   await loadMessages(null);
 }
 
 async function selectPersonalChat(user) {
-  selectedUser = user;
-  activeChatAvatar.textContent = user.name.charAt(0).toUpperCase();
-  activeChatTitle.textContent = user.name;
-  activeChatStatus.textContent = user.email;
-  activeChatStatus.classList.remove("text-success", "fw-semibold");
-  chatModeLabel.textContent = `PRIVATE CHAT WITH ${user.name.toUpperCase()}`;
-  chatAppShell.classList.remove("show-sidebar");
-
-  if (socket && socket.connected) {
-    socket.emit("join_room", { targetUserId: user.id });
+  sessionStorage.setItem("activeChatUserId", String(user.id));
+  const nextRoomId = createPrivateRoomId(currentUser.id, user.id);
+  if (currentRoomId !== nextRoomId) {
+    leavePreviousPrivateRoom();
   }
 
-  renderUsersSidebar(chatSearchInput.value);
+  selectedUser = { ...user, unreadCount: 0 };
+  currentRoomId = nextRoomId;
+  activeChatAvatar.textContent = user.name.charAt(0).toUpperCase();
+  activeChatTitle.textContent = user.name;
+  activeChatStatus.textContent = getDefaultStatusText();
+  activeChatStatus.classList.remove("text-success", "fw-semibold");
+  chatModeLabel.textContent = `PRIVATE CHAT • ${user.name.toUpperCase()}`;
+  chatAppShell.classList.remove("show-sidebar");
+
+  upsertRecentContact(selectedUser, null, false);
+
+  if (socket && socket.connected) {
+    socket.emit("join_room", {
+      roomId: currentRoomId,
+      targetUserId: user.id,
+    });
+    emitMarkAsRead(currentRoomId, user.id);
+  }
+
   await loadMessages(user.id);
 }
 
@@ -231,9 +351,34 @@ function connectSocket() {
 
   socket.on("authenticated", () => {
     activeChatStatus.textContent = getDefaultStatusText();
-    if (selectedUser) {
-      socket.emit("join_room", { targetUserId: selectedUser.id });
+    if (selectedUser && currentRoomId !== "global_group") {
+      socket.emit("join_room", {
+        roomId: currentRoomId,
+        targetUserId: selectedUser.id,
+      });
+      emitMarkAsRead(currentRoomId, selectedUser.id);
     }
+  });
+
+  socket.on("messages_delivered", ({ roomId }) => {
+    if (roomId !== currentRoomId) return;
+    allMessages.forEach((m) => {
+      if (m.senderId === currentUser.id) {
+        m.isDelivered = true;
+      }
+    });
+    renderMessages();
+  });
+
+  socket.on("messages_read", ({ roomId }) => {
+    if (roomId !== currentRoomId) return;
+    allMessages.forEach((m) => {
+      if (m.senderId === currentUser.id) {
+        m.isDelivered = true;
+        m.isRead = true;
+      }
+    });
+    renderMessages();
   });
 
   socket.on("connect_error", (err) => {
@@ -243,6 +388,18 @@ function connectSocket() {
 
   socket.on("new_message", (message) => {
     appendIncomingMessage(message);
+  });
+
+  socket.on("contact_updated", async (message) => {
+    if (selectedUser && message.senderId === selectedUser.id) {
+      return;
+    }
+
+    if (message.sender) {
+      upsertRecentContact(message.sender, message, true);
+    } else if (!chatSearchInput.value.trim()) {
+      await loadRecentContacts();
+    }
   });
 
   socket.on("user_typing", (data) => {
@@ -279,23 +436,52 @@ async function loadMessages(targetUserId = null) {
   }
 }
 
-async function loadUsers() {
+async function loadRecentContacts() {
   try {
-    const res = await fetchUsersList();
+    const res = await fetchUsersList("");
     if (res.success) {
-      allUsers = res.users || [];
-      renderUsersSidebar(chatSearchInput.value);
+      recentContacts = res.users || [];
+      if (!chatSearchInput.value.trim()) {
+        displayedUsers = [...recentContacts];
+        renderUsersSidebar();
+      }
     }
   } catch (err) {
-    console.error("Failed to load users:", err.message);
+    console.error("Failed to load contacts:", err.message);
   }
 }
+
+chatSearchInput.addEventListener("input", (e) => {
+  const query = e.target.value.trim();
+  clearTimeout(searchDebounce);
+
+  if (!query) {
+    displayedUsers = [...recentContacts];
+    renderUsersSidebar();
+    return;
+  }
+
+  searchDebounce = setTimeout(async () => {
+    try {
+      const res = await fetchUsersList(query);
+      if (res.success) {
+        displayedUsers = res.users || [];
+        renderUsersSidebar();
+      }
+    } catch (err) {
+      console.error("Search failed:", err.message);
+    }
+  }, 300);
+});
 
 messageInput.addEventListener("input", () => {
   if (!socket || !socket.connected) return;
 
   if (selectedUser) {
-    socket.emit("private_typing", { targetUserId: selectedUser.id });
+    socket.emit("private_typing", {
+      roomId: currentRoomId,
+      targetUserId: selectedUser.id,
+    });
   } else {
     socket.emit("typing");
   }
@@ -304,7 +490,10 @@ messageInput.addEventListener("input", () => {
   typingTimeout = setTimeout(() => {
     if (!socket || !socket.connected) return;
     if (selectedUser) {
-      socket.emit("private_stop_typing", { targetUserId: selectedUser.id });
+      socket.emit("private_stop_typing", {
+        roomId: currentRoomId,
+        targetUserId: selectedUser.id,
+      });
     } else {
       socket.emit("stop_typing");
     }
@@ -321,13 +510,10 @@ messageForm.addEventListener("submit", async (e) => {
 
     if (socket && socket.connected) {
       if (selectedUser) {
-        socket.emit("private_stop_typing", { targetUserId: selectedUser.id });
-        socket.emit("new_message", {
-          receiverId: selectedUser.id,
-          content,
+        socket.emit("private_stop_typing", {
+          roomId: currentRoomId,
+          targetUserId: selectedUser.id,
         });
-        messageInput.value = "";
-        return;
       } else {
         socket.emit("stop_typing");
       }
@@ -339,6 +525,9 @@ messageForm.addEventListener("submit", async (e) => {
     );
     if (res.success && res.message) {
       appendIncomingMessage(res.message);
+      if (selectedUser) {
+        upsertRecentContact(selectedUser, res.message, false);
+      }
       messageInput.value = "";
     }
   } catch (err) {
@@ -358,10 +547,6 @@ messagesViewport.addEventListener("scroll", () => {
 });
 
 scrollBottomBtn.addEventListener("click", scrollToBottom);
-
-chatSearchInput.addEventListener("input", (e) => {
-  renderUsersSidebar(e.target.value);
-});
 
 if (globalRoomItem) {
   globalRoomItem.addEventListener("click", () => {
@@ -404,7 +589,19 @@ async function initDashboard() {
   currentUserName.textContent = currentUser.name;
   currentUserAvatar.textContent = currentUser.name.charAt(0).toUpperCase();
 
-  await Promise.all([loadUsers(), loadMessages(null)]);
+  await loadRecentContacts();
+
+  const savedUserId = sessionStorage.getItem("activeChatUserId");
+  if (savedUserId) {
+    const targetUser = recentContacts.find((u) => u.id === Number(savedUserId));
+    if (targetUser) {
+      connectSocket();
+      await selectPersonalChat(targetUser);
+      return;
+    }
+  }
+
+  await loadMessages(null);
   connectSocket();
 }
 

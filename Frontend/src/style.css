@@ -617,3 +617,27 @@ body.chat-body::before {
     max-width: 85%;
   }
 }
+.msg-status-icon {
+  font-size: 0.85rem;
+  color: #667781;
+}
+
+.msg-status-icon.seen {
+  color: #53bdeb;
+}
+
+.unread-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background-color: #25d366;
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: 6px;
+}

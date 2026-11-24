@@ -1,7 +1,10 @@
 import { apiRequest } from "./authApi.js";
 
-export function fetchUsersList() {
-  return apiRequest("/api/chat/users", {
+export function fetchUsersList(search = "") {
+  const query = search.trim()
+    ? `?search=${encodeURIComponent(search.trim())}`
+    : "";
+  return apiRequest(`/api/chat/users${query}`, {
     method: "GET",
   });
 }
