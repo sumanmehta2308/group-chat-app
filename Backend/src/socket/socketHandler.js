@@ -1,13 +1,13 @@
 import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
 import User from "../models/user.js";
-
+import Message from "../models/message.js";
 let io;
-
 export const initSocket = (httpServer) => {
   io = new Server(httpServer, {
     cors: {
       origin: process.env.FRONTEND_URL || "http://localhost:5173",
+      methods: ["GET", "POST"],
       credentials: true,
     },
   });
@@ -36,7 +36,35 @@ export const initSocket = (httpServer) => {
   });
 
   io.on("connection", (socket) => {
+    console.log(`User connected: ${socket.user.name} (${socket.id})`);
     socket.join("global_group");
+
+    socket.on("send_message", async (data) => {
+      try {
+        const content = (data?.content || "").trim();
+        if (!content) return;
+
+        const newMessage = await Message.create({
+          senderId: socket.user.id,
+          content,
+        });
+
+        const fullMessage = await Message.findByPk(newMessage.id, {
+          attributes: ["id", "senderId", "content", "createdAt"],
+          include: [
+            {
+              model: User,
+              as: "sender",
+              attributes: ["id", "name", "email"],
+            },
+          ],
+        });
+
+        io.to("global_group").emit("new_message", fullMessage);
+      } catch (error) {
+        console.error("Socket message error:", error.message);
+      }
+    });
 
     socket.on("typing", () => {
       socket.to("global_group").emit("user_typing", {
@@ -51,7 +79,9 @@ export const initSocket = (httpServer) => {
       });
     });
 
-    socket.on("disconnect", () => {});
+    socket.on("disconnect", () => {
+      console.log(`User disconnected: ${socket.user.name} (${socket.id})`);
+    });
   });
 
   return io;

@@ -8,7 +8,7 @@ import "./src/models/user.js";
 import "./src/models/message.js";
 import { initSocket } from "./src/socket/socketHandler.js";
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
 
 initSocket(server);
