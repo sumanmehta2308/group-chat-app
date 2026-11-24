@@ -1,8 +1,10 @@
 import { Server } from "socket.io";
-import jwt from "jsonwebtoken";
-import User from "../models/user.js";
 import Message from "../models/message.js";
+import User from "../models/user.js";
+import { authenticateSocket } from "../middleware/socketAuthMiddleware.js";
+
 let io;
+
 export const initSocket = (httpServer) => {
   io = new Server(httpServer, {
     cors: {
@@ -12,32 +14,20 @@ export const initSocket = (httpServer) => {
     },
   });
 
-  io.use(async (socket, next) => {
-    try {
-      const token = socket.handshake.auth?.token;
-      if (!token) {
-        return next(new Error("Authentication token missing"));
-      }
-
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const user = await User.findByPk(decoded.id, {
-        attributes: ["id", "name", "email"],
-      });
-
-      if (!user) {
-        return next(new Error("User not found"));
-      }
-
-      socket.user = user;
-      next();
-    } catch {
-      next(new Error("Invalid or expired socket token"));
-    }
-  });
+  io.use(authenticateSocket);
 
   io.on("connection", (socket) => {
-    console.log(`User connected: ${socket.user.name} (${socket.id})`);
+    const { id, name, email } = socket.user;
+    console.log(
+      `Authenticated socket connected: ${name} (ID: ${id}, Email: ${email})`
+    );
+
     socket.join("global_group");
+    socket.join(`user_${id}`);
+
+    socket.emit("authenticated", {
+      user: socket.user,
+    });
 
     socket.on("send_message", async (data) => {
       try {
@@ -80,7 +70,7 @@ export const initSocket = (httpServer) => {
     });
 
     socket.on("disconnect", () => {
-      console.log(`User disconnected: ${socket.user.name} (${socket.id})`);
+      console.log(`Authenticated socket disconnected: ${name} (ID: ${id})`);
     });
   });
 

@@ -134,8 +134,13 @@ function connectSocket() {
     transports: ["websocket", "polling"],
   });
 
-  socket.on("connect", () => {
-    activeChatStatus.textContent = "All verified members • Connected";
+  socket.on("authenticated", (data) => {
+    activeChatStatus.textContent = `Connected as ${data.user.name}`;
+  });
+
+  socket.on("connect_error", (err) => {
+    console.error("Socket auth failed:", err.message);
+    activeChatStatus.textContent = "Authentication failed";
   });
 
   socket.on("new_message", (message) => {
@@ -151,7 +156,7 @@ function connectSocket() {
 
   socket.on("user_stop_typing", () => {
     if (activeChatStatus) {
-      activeChatStatus.textContent = "All verified members • Connected";
+      activeChatStatus.textContent = `Connected as ${currentUser.name}`;
       activeChatStatus.classList.remove("text-success", "fw-semibold");
     }
   });
