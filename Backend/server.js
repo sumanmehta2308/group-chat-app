@@ -6,7 +6,7 @@ import app from "./src/app.js";
 import sequelize from "./src/config/database.js";
 import "./src/models/user.js";
 import "./src/models/message.js";
-import { initSocket } from "./src/socket/socketHandler.js";
+import { initSocket } from "./src/socket-io/index.js";
 
 const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);

@@ -1,7 +1,7 @@
 import jwt from "jsonwebtoken";
 import User from "../models/user.js";
 
-export const authenticateSocket = async (socket, next) => {
+export const socketAuthMiddleware = async (socket, next) => {
   try {
     const authHeader = socket.handshake.headers?.authorization;
     const bearerToken =

@@ -1,6 +1,6 @@
 import Message from "../models/message.js";
 import User from "../models/user.js";
-import { getIO } from "../socket/socketHandler.js";
+import { getIO } from "../socket-io/index.js";
 
 export const sendMessage = async (req, res, next) => {
   try {
