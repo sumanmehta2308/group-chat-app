@@ -18,6 +18,15 @@ const Message = sequelize.define(
         key: "id",
       },
     },
+    receiverId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: null,
+      references: {
+        model: User,
+        key: "id",
+      },
+    },
     content: {
       type: DataTypes.TEXT,
       allowNull: false,
@@ -31,5 +40,6 @@ const Message = sequelize.define(
 
 User.hasMany(Message, { foreignKey: "senderId", onDelete: "CASCADE" });
 Message.belongsTo(User, { foreignKey: "senderId", as: "sender" });
+Message.belongsTo(User, { foreignKey: "receiverId", as: "receiver" });
 
 export default Message;

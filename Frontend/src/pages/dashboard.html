@@ -34,14 +34,14 @@
             <input
               type="text"
               id="chatSearchInput"
-              placeholder="Search messages"
+              placeholder="Search users or chats"
               autocomplete="off"
             />
           </div>
         </div>
 
         <div class="chat-list" id="chatList">
-          <div class="chat-item active" id="globalRoomItem">
+          <div class="chat-item active" id="globalRoomItem" data-chat-type="group">
             <div class="chat-avatar">GC</div>
             <div class="chat-item-meta">
               <div class="chat-item-top">
@@ -49,10 +49,11 @@
                 <span class="chat-item-time" id="sidebarLastTime"></span>
               </div>
               <div class="chat-item-preview" id="sidebarLastPreview">
-                Click to view messages
+                Global group chat
               </div>
             </div>
           </div>
+          <div id="usersListContainer"></div>
         </div>
       </aside>
 
@@ -67,9 +68,9 @@
             >
               <i class="bi bi-list"></i>
             </button>
-            <div class="chat-avatar">GC</div>
+            <div class="chat-avatar" id="activeChatAvatar">GC</div>
             <div class="overflow-hidden">
-              <h2 class="chat-title mb-0 text-truncate">Group Chat Room</h2>
+              <h2 class="chat-title mb-0 text-truncate" id="activeChatTitle">Group Chat Room</h2>
               <p class="chat-subtitle mb-0 text-truncate" id="activeChatStatus">
                 All verified members
               </p>
@@ -79,7 +80,7 @@
 
         <div class="messages-viewport" id="messagesViewport">
           <div class="date-divider">
-            <span>GROUP MESSAGES</span>
+            <span id="chatModeLabel">GROUP MESSAGES</span>
           </div>
           <div id="messagesContainer" class="messages-stack"></div>
         </div>

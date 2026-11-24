@@ -1,6 +1,7 @@
 import { Server } from "socket.io";
 import { socketAuthMiddleware } from "./middleware.js";
 import { registerChatHandlers } from "./handlers/chat.js";
+import { registerPersonalChatHandlers } from "./handlers/personalChat.js";
 
 let io;
 
@@ -22,6 +23,7 @@ export const initSocket = (httpServer) => {
     );
 
     registerChatHandlers(io, socket);
+    registerPersonalChatHandlers(io, socket);
 
     socket.on("disconnect", () => {
       console.log(`Authenticated socket disconnected: ${name} (ID: ${id})`);

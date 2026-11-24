@@ -1,10 +1,15 @@
 import express from "express";
-import { sendMessage, getMessages } from "../controllers/chatController.js";
 import { protect } from "../middleware/authMiddleware.js";
+import {
+  sendMessage,
+  getMessages,
+  getUsersList,
+} from "../controllers/chatController.js";
 
 const router = express.Router();
 
-router.post("/messages", protect, sendMessage);
+router.get("/users", protect, getUsersList);
 router.get("/messages", protect, getMessages);
+router.post("/messages", protect, sendMessage);
 
 export default router;

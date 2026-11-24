@@ -1,16 +1,24 @@
 import "../utils/setup.js";
 import { io } from "socket.io-client";
 import { getCurrentUser, logoutUser } from "../api/authApi.js";
-import { fetchAllMessages, postChatMessage } from "../api/chatApi.js";
+import {
+  fetchAllMessages,
+  postChatMessage,
+  fetchUsersList,
+} from "../api/chatApi.js";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
 const currentUserAvatar = document.getElementById("currentUserAvatar");
 const currentUserName = document.getElementById("currentUserName");
+const activeChatAvatar = document.getElementById("activeChatAvatar");
+const activeChatTitle = document.getElementById("activeChatTitle");
 const activeChatStatus = document.getElementById("activeChatStatus");
+const chatModeLabel = document.getElementById("chatModeLabel");
 const chatSearchInput = document.getElementById("chatSearchInput");
 const sidebarLastTime = document.getElementById("sidebarLastTime");
 const sidebarLastPreview = document.getElementById("sidebarLastPreview");
+const usersListContainer = document.getElementById("usersListContainer");
 const messagesViewport = document.getElementById("messagesViewport");
 const messagesContainer = document.getElementById("messagesContainer");
 const messageForm = document.getElementById("messageForm");
@@ -20,10 +28,12 @@ const scrollBottomBtn = document.getElementById("scrollBottomBtn");
 const logoutBtn = document.getElementById("logoutBtn");
 const mobileBackBtn = document.getElementById("mobileBackBtn");
 const globalRoomItem = document.getElementById("globalRoomItem");
-const chatAppShell = document.getElementById("chatAppShell");
+const chatAppShell = document.querySelector(".chat-app-shell");
 
 let currentUser = null;
+let allUsers = [];
 let allMessages = [];
+let selectedUser = null;
 let socket = null;
 let typingTimeout = null;
 
@@ -46,9 +56,62 @@ function scrollToBottom() {
   scrollBottomBtn.classList.add("d-none");
 }
 
-function updateSidebarPreview() {
+function getDefaultStatusText() {
+  if (selectedUser) {
+    return selectedUser.email;
+  }
+  return currentUser
+    ? `Connected as ${currentUser.name}`
+    : "All verified members";
+}
+
+function renderUsersSidebar(filterText = "") {
+  const query = filterText.trim().toLowerCase();
+  const filteredUsers = query
+    ? allUsers.filter(
+        (u) =>
+          u.name.toLowerCase().includes(query) ||
+          u.email.toLowerCase().includes(query)
+      )
+    : allUsers;
+
+  globalRoomItem.classList.toggle("active", selectedUser === null);
+
+  usersListContainer.innerHTML = filteredUsers
+    .map((user) => {
+      const isActive = selectedUser && selectedUser.id === user.id;
+      const initial = user.name.charAt(0).toUpperCase();
+      return `
+        <div class="chat-item ${isActive ? "active" : ""}" data-user-id="${
+        user.id
+      }">
+          <div class="chat-avatar">${escapeHtml(initial)}</div>
+          <div class="chat-item-meta">
+            <div class="chat-item-top">
+              <span class="chat-item-name">${escapeHtml(user.name)}</span>
+            </div>
+            <div class="chat-item-preview">${escapeHtml(user.email)}</div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  usersListContainer.querySelectorAll(".chat-item").forEach((item) => {
+    item.addEventListener("click", () => {
+      const userId = Number(item.dataset.userId);
+      const user = allUsers.find((u) => u.id === userId);
+      if (user) {
+        selectPersonalChat(user);
+      }
+    });
+  });
+}
+
+function updateGroupSidebarPreview() {
+  if (selectedUser !== null) return;
   if (allMessages.length === 0) {
-    sidebarLastPreview.textContent = "No messages yet. Say hi!";
+    sidebarLastPreview.textContent = "Global group chat";
     sidebarLastTime.textContent = "";
     return;
   }
@@ -62,38 +125,26 @@ function updateSidebarPreview() {
   sidebarLastTime.textContent = formatTimestamp(last.createdAt);
 }
 
-function renderMessages(filterText = "") {
-  const query = filterText.trim().toLowerCase();
-  const filtered = query
-    ? allMessages.filter(
-        (m) =>
-          m.content.toLowerCase().includes(query) ||
-          (m.sender?.name || "").toLowerCase().includes(query)
-      )
-    : allMessages;
-
-  if (filtered.length === 0) {
+function renderMessages() {
+  if (allMessages.length === 0) {
     messagesContainer.innerHTML = `
       <div class="text-center text-muted small my-4">
-        ${
-          query
-            ? "No matching messages found."
-            : "No messages yet. Start the conversation!"
-        }
+        No messages yet. Start the conversation!
       </div>
     `;
     return;
   }
 
-  messagesContainer.innerHTML = filtered
+  messagesContainer.innerHTML = allMessages
     .map((msg) => {
       const isOutgoing = msg.senderId === currentUser.id;
       const rowClass = isOutgoing ? "outgoing" : "incoming";
-      const senderHtml = !isOutgoing
-        ? `<div class="msg-sender">${escapeHtml(
-            msg.sender?.name || "Unknown"
-          )}</div>`
-        : "";
+      const senderHtml =
+        !isOutgoing && !selectedUser
+          ? `<div class="msg-sender">${escapeHtml(
+              msg.sender?.name || "Unknown"
+            )}</div>`
+          : "";
       const tickHtml = isOutgoing
         ? `<i class="bi bi-check2-all msg-status-icon"></i>`
         : "";
@@ -116,13 +167,57 @@ function renderMessages(filterText = "") {
   scrollToBottom();
 }
 
+function isMessageForActiveChat(message) {
+  if (!selectedUser) {
+    return message.receiverId === null;
+  }
+  return (
+    (message.senderId === currentUser.id &&
+      message.receiverId === selectedUser.id) ||
+    (message.senderId === selectedUser.id &&
+      message.receiverId === currentUser.id)
+  );
+}
+
 function appendIncomingMessage(message) {
+  if (!isMessageForActiveChat(message)) return;
+
   const alreadyExists = allMessages.some((m) => m.id === message.id);
   if (alreadyExists) return;
 
   allMessages.push(message);
-  updateSidebarPreview();
-  renderMessages(chatSearchInput.value);
+  updateGroupSidebarPreview();
+  renderMessages();
+}
+
+async function selectGroupChat() {
+  selectedUser = null;
+  activeChatAvatar.textContent = "GC";
+  activeChatTitle.textContent = "Group Chat Room";
+  activeChatStatus.textContent = getDefaultStatusText();
+  activeChatStatus.classList.remove("text-success", "fw-semibold");
+  chatModeLabel.textContent = "GROUP MESSAGES";
+  chatAppShell.classList.remove("show-sidebar");
+
+  renderUsersSidebar(chatSearchInput.value);
+  await loadMessages(null);
+}
+
+async function selectPersonalChat(user) {
+  selectedUser = user;
+  activeChatAvatar.textContent = user.name.charAt(0).toUpperCase();
+  activeChatTitle.textContent = user.name;
+  activeChatStatus.textContent = user.email;
+  activeChatStatus.classList.remove("text-success", "fw-semibold");
+  chatModeLabel.textContent = `PRIVATE CHAT WITH ${user.name.toUpperCase()}`;
+  chatAppShell.classList.remove("show-sidebar");
+
+  if (socket && socket.connected) {
+    socket.emit("join_room", { targetUserId: user.id });
+  }
+
+  renderUsersSidebar(chatSearchInput.value);
+  await loadMessages(user.id);
 }
 
 function connectSocket() {
@@ -134,8 +229,11 @@ function connectSocket() {
     transports: ["websocket", "polling"],
   });
 
-  socket.on("authenticated", (data) => {
-    activeChatStatus.textContent = `Connected as ${data.user.name}`;
+  socket.on("authenticated", () => {
+    activeChatStatus.textContent = getDefaultStatusText();
+    if (selectedUser) {
+      socket.emit("join_room", { targetUserId: selectedUser.id });
+    }
   });
 
   socket.on("connect_error", (err) => {
@@ -148,17 +246,19 @@ function connectSocket() {
   });
 
   socket.on("user_typing", (data) => {
-    if (activeChatStatus && data.userId !== currentUser.id) {
+    if (data.userId === currentUser.id) return;
+    if (selectedUser && data.isPrivate && data.userId === selectedUser.id) {
+      activeChatStatus.textContent = "typing...";
+      activeChatStatus.classList.add("text-success", "fw-semibold");
+    } else if (!selectedUser && !data.isPrivate) {
       activeChatStatus.textContent = `${data.name} is typing...`;
       activeChatStatus.classList.add("text-success", "fw-semibold");
     }
   });
 
   socket.on("user_stop_typing", () => {
-    if (activeChatStatus) {
-      activeChatStatus.textContent = `Connected as ${currentUser.name}`;
-      activeChatStatus.classList.remove("text-success", "fw-semibold");
-    }
+    activeChatStatus.textContent = getDefaultStatusText();
+    activeChatStatus.classList.remove("text-success", "fw-semibold");
   });
 
   socket.on("disconnect", () => {
@@ -166,25 +266,48 @@ function connectSocket() {
   });
 }
 
-async function loadMessages() {
+async function loadMessages(targetUserId = null) {
   try {
-    const res = await fetchAllMessages();
+    const res = await fetchAllMessages(targetUserId);
     if (res.success) {
       allMessages = res.messages || [];
-      updateSidebarPreview();
-      renderMessages(chatSearchInput.value);
+      updateGroupSidebarPreview();
+      renderMessages();
     }
   } catch (err) {
     console.error("Failed to load messages:", err.message);
   }
 }
 
+async function loadUsers() {
+  try {
+    const res = await fetchUsersList();
+    if (res.success) {
+      allUsers = res.users || [];
+      renderUsersSidebar(chatSearchInput.value);
+    }
+  } catch (err) {
+    console.error("Failed to load users:", err.message);
+  }
+}
+
 messageInput.addEventListener("input", () => {
   if (!socket || !socket.connected) return;
-  socket.emit("typing");
+
+  if (selectedUser) {
+    socket.emit("private_typing", { targetUserId: selectedUser.id });
+  } else {
+    socket.emit("typing");
+  }
+
   clearTimeout(typingTimeout);
   typingTimeout = setTimeout(() => {
-    socket.emit("stop_typing");
+    if (!socket || !socket.connected) return;
+    if (selectedUser) {
+      socket.emit("private_stop_typing", { targetUserId: selectedUser.id });
+    } else {
+      socket.emit("stop_typing");
+    }
   }, 1200);
 });
 
@@ -195,9 +318,25 @@ messageForm.addEventListener("submit", async (e) => {
 
   try {
     sendBtn.disabled = true;
-    if (socket && socket.connected) socket.emit("stop_typing");
 
-    const res = await postChatMessage(content);
+    if (socket && socket.connected) {
+      if (selectedUser) {
+        socket.emit("private_stop_typing", { targetUserId: selectedUser.id });
+        socket.emit("new_message", {
+          receiverId: selectedUser.id,
+          content,
+        });
+        messageInput.value = "";
+        return;
+      } else {
+        socket.emit("stop_typing");
+      }
+    }
+
+    const res = await postChatMessage(
+      content,
+      selectedUser ? selectedUser.id : null
+    );
     if (res.success && res.message) {
       appendIncomingMessage(res.message);
       messageInput.value = "";
@@ -221,12 +360,12 @@ messagesViewport.addEventListener("scroll", () => {
 scrollBottomBtn.addEventListener("click", scrollToBottom);
 
 chatSearchInput.addEventListener("input", (e) => {
-  renderMessages(e.target.value);
+  renderUsersSidebar(e.target.value);
 });
 
 if (globalRoomItem) {
   globalRoomItem.addEventListener("click", () => {
-    chatAppShell.classList.remove("show-sidebar");
+    selectGroupChat();
   });
 }
 
@@ -265,7 +404,7 @@ async function initDashboard() {
   currentUserName.textContent = currentUser.name;
   currentUserAvatar.textContent = currentUser.name.charAt(0).toUpperCase();
 
-  await loadMessages();
+  await Promise.all([loadUsers(), loadMessages(null)]);
   connectSocket();
 }
 
