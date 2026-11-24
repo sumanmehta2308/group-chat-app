@@ -3,7 +3,7 @@ import { io } from "socket.io-client";
 import { getCurrentUser, logoutUser } from "../api/authApi.js";
 import { fetchAllMessages, postChatMessage } from "../api/chatApi.js";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
 const currentUserAvatar = document.getElementById("currentUserAvatar");
 const currentUserName = document.getElementById("currentUserName");
@@ -20,7 +20,7 @@ const scrollBottomBtn = document.getElementById("scrollBottomBtn");
 const logoutBtn = document.getElementById("logoutBtn");
 const mobileBackBtn = document.getElementById("mobileBackBtn");
 const globalRoomItem = document.getElementById("globalRoomItem");
-const chatAppShell = document.querySelector(".chat-app-shell");
+const chatAppShell = document.getElementById("chatAppShell");
 
 let currentUser = null;
 let allMessages = [];
@@ -127,9 +127,15 @@ function appendIncomingMessage(message) {
 
 function connectSocket() {
   const token = localStorage.getItem("token");
+
   socket = io(API_BASE_URL, {
     auth: { token },
     withCredentials: true,
+    transports: ["websocket", "polling"],
+  });
+
+  socket.on("connect", () => {
+    activeChatStatus.textContent = "All verified members • Connected";
   });
 
   socket.on("new_message", (message) => {
@@ -145,9 +151,13 @@ function connectSocket() {
 
   socket.on("user_stop_typing", () => {
     if (activeChatStatus) {
-      activeChatStatus.textContent = "All verified members";
+      activeChatStatus.textContent = "All verified members • Connected";
       activeChatStatus.classList.remove("text-success", "fw-semibold");
     }
+  });
+
+  socket.on("disconnect", () => {
+    activeChatStatus.textContent = "Reconnecting...";
   });
 }
 
@@ -165,7 +175,7 @@ async function loadMessages() {
 }
 
 messageInput.addEventListener("input", () => {
-  if (!socket) return;
+  if (!socket || !socket.connected) return;
   socket.emit("typing");
   clearTimeout(typingTimeout);
   typingTimeout = setTimeout(() => {
@@ -180,7 +190,7 @@ messageForm.addEventListener("submit", async (e) => {
 
   try {
     sendBtn.disabled = true;
-    if (socket) socket.emit("stop_typing");
+    if (socket && socket.connected) socket.emit("stop_typing");
 
     const res = await postChatMessage(content);
     if (res.success && res.message) {
