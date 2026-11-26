@@ -2,6 +2,7 @@ import { Server } from "socket.io";
 import { socketAuthMiddleware } from "./middleware.js";
 import { registerChatHandlers } from "./handlers/chat.js";
 import { registerPersonalChatHandlers } from "./handlers/personalChat.js";
+import { registerGroupChatHandlers } from "./handlers/groupChat.js";
 
 let io;
 
@@ -16,14 +17,15 @@ export const initSocket = (httpServer) => {
 
   io.use(socketAuthMiddleware);
 
-  io.on("connection", (socket) => {
+  io.on("connection", async (socket) => {
     const { id, name, email } = socket.user;
     console.log(
       `Authenticated socket connected: ${name} (ID: ${id}, Email: ${email})`
     );
 
     registerChatHandlers(io, socket);
-    registerPersonalChatHandlers(io, socket);
+    await registerPersonalChatHandlers(io, socket);
+    await registerGroupChatHandlers(io, socket);
 
     socket.on("disconnect", () => {
       console.log(`Authenticated socket disconnected: ${name} (ID: ${id})`);

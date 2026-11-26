@@ -5,6 +5,9 @@ import {
   fetchAllMessages,
   postChatMessage,
   fetchUsersList,
+  verifyUserEmail,
+  fetchUserGroups,
+  createNewGroup,
 } from "../api/chatApi.js";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
@@ -16,8 +19,10 @@ const activeChatTitle = document.getElementById("activeChatTitle");
 const activeChatStatus = document.getElementById("activeChatStatus");
 const chatModeLabel = document.getElementById("chatModeLabel");
 const chatSearchInput = document.getElementById("chatSearchInput");
+const directEmailJoinForm = document.getElementById("directEmailJoinForm");
 const sidebarLastTime = document.getElementById("sidebarLastTime");
 const sidebarLastPreview = document.getElementById("sidebarLastPreview");
+const groupsListContainer = document.getElementById("groupsListContainer");
 const usersListContainer = document.getElementById("usersListContainer");
 const messagesViewport = document.getElementById("messagesViewport");
 const messagesContainer = document.getElementById("messagesContainer");
@@ -30,20 +35,32 @@ const mobileBackBtn = document.getElementById("mobileBackBtn");
 const globalRoomItem = document.getElementById("globalRoomItem");
 const chatAppShell = document.querySelector(".chat-app-shell");
 
+const openCreateGroupBtn = document.getElementById("openCreateGroupBtn");
+const createGroupModal = document.getElementById("createGroupModal");
+const closeCreateGroupBtn = document.getElementById("closeCreateGroupBtn");
+const cancelCreateGroupBtn = document.getElementById("cancelCreateGroupBtn");
+const createGroupForm = document.getElementById("createGroupForm");
+const groupNameInput = document.getElementById("groupNameInput");
+const groupMembersInput = document.getElementById("groupMembersInput");
+
 let currentUser = null;
+let userGroups = [];
 let recentContacts = [];
 let displayedUsers = [];
 let allMessages = [];
 let selectedUser = null;
+let selectedGroup = null;
 let currentRoomId = "global_group";
 let socket = null;
 let typingTimeout = null;
 let searchDebounce = null;
 
-function createPrivateRoomId(userId1, userId2) {
-  const first = Math.min(Number(userId1), Number(userId2));
-  const second = Math.max(Number(userId1), Number(userId2));
-  return `private_${first}_${second}`;
+function createPrivateRoomIdByEmail(email1, email2) {
+  const sorted = [
+    String(email1).trim().toLowerCase(),
+    String(email2).trim().toLowerCase(),
+  ].sort();
+  return `private_${sorted[0]}_${sorted[1]}`;
 }
 
 function formatTimestamp(isoString) {
@@ -66,6 +83,9 @@ function scrollToBottom() {
 }
 
 function getDefaultStatusText() {
+  if (selectedGroup) {
+    return `${selectedGroup.memberCount || 1} members • Group Room`;
+  }
   if (selectedUser) {
     return `${selectedUser.email} • Room: ${currentRoomId}`;
   }
@@ -75,6 +95,9 @@ function getDefaultStatusText() {
 }
 
 function getMessageTickHtml(msg) {
+  if (selectedGroup || !selectedUser) {
+    return `<i class="bi bi-check2-all msg-status-icon seen"></i>`;
+  }
   if (msg.isRead) {
     return `<i class="bi bi-check2-all msg-status-icon seen" title="Seen"></i>`;
   }
@@ -84,9 +107,56 @@ function getMessageTickHtml(msg) {
   return `<i class="bi bi-check2 msg-status-icon" title="Sent"></i>`;
 }
 
+function renderGroupsSidebar() {
+  if (userGroups.length === 0) {
+    groupsListContainer.innerHTML = "";
+    return;
+  }
+
+  groupsListContainer.innerHTML = userGroups
+    .map((group) => {
+      const isActive = selectedGroup && selectedGroup.id === group.id;
+      const initial = group.name.charAt(0).toUpperCase();
+      return `
+        <div class="chat-item ${isActive ? "active" : ""}" data-group-id="${
+        group.id
+      }">
+          <div class="chat-avatar" style="background-color: #008069;">${escapeHtml(
+            initial
+          )}</div>
+          <div class="chat-item-meta">
+            <div class="chat-item-top">
+              <span class="chat-item-name">${escapeHtml(group.name)}</span>
+              <span class="badge bg-light text-dark border" style="font-size: 10px;">Group</span>
+            </div>
+            <div class="chat-item-preview">${
+              group.memberCount || 1
+            } members</div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  groupsListContainer.querySelectorAll(".chat-item").forEach((item) => {
+    item.addEventListener("click", () => {
+      const groupId = Number(item.dataset.groupId);
+      const group = userGroups.find((g) => g.id === groupId);
+      if (group) {
+        selectCustomGroupChat(group);
+      }
+    });
+  });
+}
+
 function renderUsersSidebar() {
   const isSearching = chatSearchInput.value.trim().length > 0;
-  globalRoomItem.classList.toggle("active", selectedUser === null);
+  globalRoomItem.classList.toggle(
+    "active",
+    selectedUser === null && selectedGroup === null
+  );
+
+  renderGroupsSidebar();
 
   if (displayedUsers.length === 0 && isSearching) {
     usersListContainer.innerHTML = `
@@ -188,7 +258,7 @@ function upsertRecentContact(
 }
 
 function updateGroupSidebarPreview() {
-  if (selectedUser !== null) return;
+  if (selectedUser !== null || selectedGroup !== null) return;
   if (allMessages.length === 0) {
     sidebarLastPreview.textContent = "Global group chat";
     sidebarLastTime.textContent = "";
@@ -245,15 +315,19 @@ function renderMessages() {
 }
 
 function isMessageForActiveChat(message) {
-  if (!selectedUser) {
-    return message.receiverId === null;
+  if (selectedGroup) {
+    return Number(message.groupId) === Number(selectedGroup.id);
   }
-  return (
-    (message.senderId === currentUser.id &&
-      message.receiverId === selectedUser.id) ||
-    (message.senderId === selectedUser.id &&
-      message.receiverId === currentUser.id)
-  );
+  if (selectedUser) {
+    return (
+      !message.groupId &&
+      ((message.senderId === currentUser.id &&
+        message.receiverId === selectedUser.id) ||
+        (message.senderId === selectedUser.id &&
+          message.receiverId === currentUser.id))
+    );
+  }
+  return message.receiverId === null && message.groupId === null;
 }
 
 function emitMarkAsRead(roomId, senderId) {
@@ -288,36 +362,66 @@ function leavePreviousPrivateRoom() {
     socket &&
     socket.connected &&
     currentRoomId &&
-    currentRoomId !== "global_group"
+    currentRoomId.startsWith("private_")
   ) {
     socket.emit("leave_room", { roomId: currentRoomId });
   }
 }
 
-async function selectGroupChat() {
-  sessionStorage.removeItem("activeChatUserId");
+async function selectGlobalGroupChat() {
+  sessionStorage.removeItem("activeChatState");
   leavePreviousPrivateRoom();
 
   selectedUser = null;
+  selectedGroup = null;
   currentRoomId = "global_group";
   activeChatAvatar.textContent = "GC";
   activeChatTitle.textContent = "Group Chat Room";
   activeChatStatus.textContent = getDefaultStatusText();
   activeChatStatus.classList.remove("text-success", "fw-semibold");
-  chatModeLabel.textContent = "GROUP MESSAGES";
+  chatModeLabel.textContent = "GLOBAL GROUP MESSAGES";
   chatAppShell.classList.remove("show-sidebar");
 
   renderUsersSidebar();
-  await loadMessages(null);
+  await loadMessages({});
+}
+
+async function selectCustomGroupChat(group) {
+  sessionStorage.setItem(
+    "activeChatState",
+    JSON.stringify({ type: "group", id: group.id })
+  );
+  leavePreviousPrivateRoom();
+
+  selectedUser = null;
+  selectedGroup = group;
+  currentRoomId = `group_${group.id}`;
+  activeChatAvatar.textContent = group.name.charAt(0).toUpperCase();
+  activeChatTitle.textContent = group.name;
+  activeChatStatus.textContent = getDefaultStatusText();
+  activeChatStatus.classList.remove("text-success", "fw-semibold");
+  chatModeLabel.textContent = `GROUP • ${group.name.toUpperCase()}`;
+  chatAppShell.classList.remove("show-sidebar");
+
+  if (socket && socket.connected) {
+    socket.emit("join_group_room", { groupId: group.id });
+  }
+
+  renderUsersSidebar();
+  await loadMessages({ groupId: group.id });
 }
 
 async function selectPersonalChat(user) {
-  sessionStorage.setItem("activeChatUserId", String(user.id));
-  const nextRoomId = createPrivateRoomId(currentUser.id, user.id);
+  sessionStorage.setItem(
+    "activeChatState",
+    JSON.stringify({ type: "user", id: user.id })
+  );
+  const nextRoomId = createPrivateRoomIdByEmail(currentUser.email, user.email);
   if (currentRoomId !== nextRoomId) {
     leavePreviousPrivateRoom();
   }
 
+  selectedGroup = null;
   selectedUser = { ...user, unreadCount: 0 };
   currentRoomId = nextRoomId;
   activeChatAvatar.textContent = user.name.charAt(0).toUpperCase();
@@ -332,12 +436,12 @@ async function selectPersonalChat(user) {
   if (socket && socket.connected) {
     socket.emit("join_room", {
       roomId: currentRoomId,
-      targetUserId: user.id,
+      targetEmail: user.email,
     });
     emitMarkAsRead(currentRoomId, user.id);
   }
 
-  await loadMessages(user.id);
+  await loadMessages({ targetUserId: user.id });
 }
 
 function connectSocket() {
@@ -351,12 +455,29 @@ function connectSocket() {
 
   socket.on("authenticated", () => {
     activeChatStatus.textContent = getDefaultStatusText();
-    if (selectedUser && currentRoomId !== "global_group") {
+    if (selectedUser && currentRoomId.startsWith("private_")) {
       socket.emit("join_room", {
         roomId: currentRoomId,
-        targetUserId: selectedUser.id,
+        targetEmail: selectedUser.email,
       });
       emitMarkAsRead(currentRoomId, selectedUser.id);
+    } else if (selectedGroup) {
+      socket.emit("join_group_room", { groupId: selectedGroup.id });
+    }
+  });
+
+  socket.on("room_error", ({ message }) => {
+    alert(message || "Unable to join private room");
+  });
+
+  socket.on("group_created", (newGroup) => {
+    const exists = userGroups.some((g) => g.id === newGroup.id);
+    if (!exists) {
+      userGroups.unshift(newGroup);
+      renderUsersSidebar();
+    }
+    if (socket && socket.connected) {
+      socket.emit("join_group_room", { groupId: newGroup.id });
     }
   });
 
@@ -404,10 +525,26 @@ function connectSocket() {
 
   socket.on("user_typing", (data) => {
     if (data.userId === currentUser.id) return;
-    if (selectedUser && data.isPrivate && data.userId === selectedUser.id) {
+    if (
+      selectedGroup &&
+      data.isGroup &&
+      Number(data.groupId) === Number(selectedGroup.id)
+    ) {
+      activeChatStatus.textContent = `${data.name} is typing...`;
+      activeChatStatus.classList.add("text-success", "fw-semibold");
+    } else if (
+      selectedUser &&
+      data.isPrivate &&
+      data.roomId === currentRoomId
+    ) {
       activeChatStatus.textContent = "typing...";
       activeChatStatus.classList.add("text-success", "fw-semibold");
-    } else if (!selectedUser && !data.isPrivate) {
+    } else if (
+      !selectedUser &&
+      !selectedGroup &&
+      !data.isPrivate &&
+      !data.isGroup
+    ) {
       activeChatStatus.textContent = `${data.name} is typing...`;
       activeChatStatus.classList.add("text-success", "fw-semibold");
     }
@@ -423,9 +560,9 @@ function connectSocket() {
   });
 }
 
-async function loadMessages(targetUserId = null) {
+async function loadMessages(filter = {}) {
   try {
-    const res = await fetchAllMessages(targetUserId);
+    const res = await fetchAllMessages(filter);
     if (res.success) {
       allMessages = res.messages || [];
       updateGroupSidebarPreview();
@@ -450,6 +587,34 @@ async function loadRecentContacts() {
     console.error("Failed to load contacts:", err.message);
   }
 }
+
+async function loadGroups() {
+  try {
+    const res = await fetchUserGroups();
+    if (res.success) {
+      userGroups = res.groups || [];
+      renderUsersSidebar();
+    }
+  } catch (err) {
+    console.error("Failed to load groups:", err.message);
+  }
+}
+
+directEmailJoinForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = chatSearchInput.value.trim();
+  if (!email) return;
+
+  try {
+    const res = await verifyUserEmail(email);
+    if (res.success && res.user) {
+      chatSearchInput.value = "";
+      await selectPersonalChat(res.user);
+    }
+  } catch (err) {
+    alert(err.message || "Invalid or unregistered email address");
+  }
+});
 
 chatSearchInput.addEventListener("input", (e) => {
   const query = e.target.value.trim();
@@ -477,11 +642,10 @@ chatSearchInput.addEventListener("input", (e) => {
 messageInput.addEventListener("input", () => {
   if (!socket || !socket.connected) return;
 
-  if (selectedUser) {
-    socket.emit("private_typing", {
-      roomId: currentRoomId,
-      targetUserId: selectedUser.id,
-    });
+  if (selectedGroup) {
+    socket.emit("group_typing", { groupId: selectedGroup.id });
+  } else if (selectedUser) {
+    socket.emit("private_typing", { roomId: currentRoomId });
   } else {
     socket.emit("typing");
   }
@@ -489,11 +653,10 @@ messageInput.addEventListener("input", () => {
   clearTimeout(typingTimeout);
   typingTimeout = setTimeout(() => {
     if (!socket || !socket.connected) return;
-    if (selectedUser) {
-      socket.emit("private_stop_typing", {
-        roomId: currentRoomId,
-        targetUserId: selectedUser.id,
-      });
+    if (selectedGroup) {
+      socket.emit("group_stop_typing", { groupId: selectedGroup.id });
+    } else if (selectedUser) {
+      socket.emit("private_stop_typing", { roomId: currentRoomId });
     } else {
       socket.emit("stop_typing");
     }
@@ -509,20 +672,20 @@ messageForm.addEventListener("submit", async (e) => {
     sendBtn.disabled = true;
 
     if (socket && socket.connected) {
-      if (selectedUser) {
-        socket.emit("private_stop_typing", {
-          roomId: currentRoomId,
-          targetUserId: selectedUser.id,
-        });
+      if (selectedGroup) {
+        socket.emit("group_stop_typing", { groupId: selectedGroup.id });
+      } else if (selectedUser) {
+        socket.emit("private_stop_typing", { roomId: currentRoomId });
       } else {
         socket.emit("stop_typing");
       }
     }
 
-    const res = await postChatMessage(
-      content,
-      selectedUser ? selectedUser.id : null
-    );
+    const res = await postChatMessage(content, {
+      receiverId: selectedUser ? selectedUser.id : null,
+      groupId: selectedGroup ? selectedGroup.id : null,
+    });
+
     if (res.success && res.message) {
       appendIncomingMessage(res.message);
       if (selectedUser) {
@@ -538,6 +701,47 @@ messageForm.addEventListener("submit", async (e) => {
   }
 });
 
+function toggleGroupModal(show) {
+  if (show) {
+    createGroupModal.classList.remove("d-none");
+    createGroupModal.classList.add("d-flex");
+    groupNameInput.focus();
+  } else {
+    createGroupModal.classList.add("d-none");
+    createGroupModal.classList.remove("d-flex");
+    createGroupForm.reset();
+  }
+}
+
+openCreateGroupBtn.addEventListener("click", () => toggleGroupModal(true));
+closeCreateGroupBtn.addEventListener("click", () => toggleGroupModal(false));
+cancelCreateGroupBtn.addEventListener("click", () => toggleGroupModal(false));
+
+createGroupForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = groupNameInput.value.trim();
+  const rawEmails = groupMembersInput.value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (!name) return;
+
+  try {
+    const res = await createNewGroup(name, rawEmails);
+    if (res.success && res.group) {
+      toggleGroupModal(false);
+      const exists = userGroups.some((g) => g.id === res.group.id);
+      if (!exists) {
+        userGroups.unshift(res.group);
+      }
+      await selectCustomGroupChat(res.group);
+    }
+  } catch (err) {
+    alert(err.message || "Failed to create group");
+  }
+});
+
 messagesViewport.addEventListener("scroll", () => {
   const distanceFromBottom =
     messagesViewport.scrollHeight -
@@ -550,7 +754,7 @@ scrollBottomBtn.addEventListener("click", scrollToBottom);
 
 if (globalRoomItem) {
   globalRoomItem.addEventListener("click", () => {
-    selectGroupChat();
+    selectGlobalGroupChat();
   });
 }
 
@@ -589,19 +793,35 @@ async function initDashboard() {
   currentUserName.textContent = currentUser.name;
   currentUserAvatar.textContent = currentUser.name.charAt(0).toUpperCase();
 
-  await loadRecentContacts();
+  await Promise.all([loadGroups(), loadRecentContacts()]);
 
-  const savedUserId = sessionStorage.getItem("activeChatUserId");
-  if (savedUserId) {
-    const targetUser = recentContacts.find((u) => u.id === Number(savedUserId));
-    if (targetUser) {
-      connectSocket();
-      await selectPersonalChat(targetUser);
-      return;
+  const savedRaw = sessionStorage.getItem("activeChatState");
+  if (savedRaw) {
+    try {
+      const saved = JSON.parse(savedRaw);
+      if (saved.type === "group") {
+        const targetGroup = userGroups.find((g) => g.id === Number(saved.id));
+        if (targetGroup) {
+          connectSocket();
+          await selectCustomGroupChat(targetGroup);
+          return;
+        }
+      } else if (saved.type === "user") {
+        const targetUser = recentContacts.find(
+          (u) => u.id === Number(saved.id)
+        );
+        if (targetUser) {
+          connectSocket();
+          await selectPersonalChat(targetUser);
+          return;
+        }
+      }
+    } catch {
+      sessionStorage.removeItem("activeChatState");
     }
   }
 
-  await loadMessages(null);
+  await loadMessages({});
   connectSocket();
 }
 

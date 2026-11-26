@@ -5,6 +5,8 @@ import http from "http";
 import app from "./src/app.js";
 import sequelize from "./src/config/database.js";
 import "./src/models/user.js";
+import "./src/models/group.js";
+import "./src/models/groupMember.js";
 import "./src/models/message.js";
 import { initSocket } from "./src/socket-io/index.js";
 
@@ -24,3 +26,5 @@ sequelize
   .catch((err) => {
     console.error("Database connection failed:", err);
   });
+
+  

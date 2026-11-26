@@ -19,6 +19,14 @@
           <div class="d-flex align-items-center gap-1">
             <button
               type="button"
+              class="icon-btn"
+              id="openCreateGroupBtn"
+              title="Create New Group"
+            >
+              <i class="bi bi-people-fill"></i>
+            </button>
+            <button
+              type="button"
               class="icon-btn text-danger"
               id="logoutBtn"
               title="Logout"
@@ -29,19 +37,19 @@
         </header>
 
         <div class="sidebar-search">
-          <div class="search-input-wrap">
+          <form id="directEmailJoinForm" class="search-input-wrap">
             <i class="bi bi-search text-muted"></i>
             <input
               type="text"
               id="chatSearchInput"
-              placeholder="Search user by email..."
+              placeholder="Enter email & press Enter to join room..."
               autocomplete="off"
             />
-          </div>
+          </form>
         </div>
 
         <div class="chat-list" id="chatList">
-          <div class="chat-item active" id="globalRoomItem" data-chat-type="group">
+          <div class="chat-item active" id="globalRoomItem" data-chat-type="global">
             <div class="chat-avatar">GC</div>
             <div class="chat-item-meta">
               <div class="chat-item-top">
@@ -53,6 +61,8 @@
               </div>
             </div>
           </div>
+
+          <div id="groupsListContainer"></div>
           <div id="usersListContainer"></div>
         </div>
       </aside>
@@ -109,6 +119,51 @@
           </form>
         </footer>
       </section>
+    </div>
+
+    <div
+      id="createGroupModal"
+      class="d-none position-fixed top-0 start-0 w-100 h-100 align-items-center justify-content-center"
+      style="background: rgba(11, 20, 26, 0.55); z-index: 1050;"
+    >
+      <div class="bg-white rounded-3 p-4 shadow" style="width: 92%; max-width: 420px;">
+        <div class="d-flex align-items-center justify-content-between mb-3">
+          <h5 class="mb-0 fw-semibold">Create New Group</h5>
+          <button type="button" class="icon-btn" id="closeCreateGroupBtn">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+        <form id="createGroupForm">
+          <div class="mb-3">
+            <label class="form-label">Group Name</label>
+            <input
+              type="text"
+              id="groupNameInput"
+              class="form-control"
+              placeholder="e.g., NIT Raipur Project Team"
+              required
+            />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Add Members by Email (comma separated)</label>
+            <input
+              type="text"
+              id="groupMembersInput"
+              class="form-control"
+              placeholder="user1@gmail.com, user2@gmail.com"
+            />
+            <div class="form-text">Only registered & verified users will be added.</div>
+          </div>
+          <div class="d-flex justify-content-end gap-2">
+            <button type="button" class="btn btn-light" id="cancelCreateGroupBtn">
+              Cancel
+            </button>
+            <button type="submit" class="btn text-white" style="background-color: #00a884;">
+              Create Group
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
 
     <script type="module" src="/src/scripts/dashboard.js"></script>

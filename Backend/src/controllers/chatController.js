@@ -1,11 +1,62 @@
 import { Op } from "sequelize";
 import Message from "../models/message.js";
 import User from "../models/user.js";
+import Group from "../models/group.js";
+import GroupMember from "../models/groupMember.js";
 import { getIO } from "../socket-io/index.js";
 import {
-  getPrivateRoomId,
+  getPrivateRoomIdByEmail,
   isUserOnline,
 } from "../socket-io/handlers/personalChat.js";
+import { getGroupRoomId } from "../socket-io/handlers/groupChat.js";
+
+export const verifyUserByEmail = async (req, res, next) => {
+  try {
+    const email = (req.query.email || "").trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email address is required",
+      });
+    }
+
+    if (email === req.user.email.toLowerCase()) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot start a private chat with yourself",
+      });
+    }
+
+    const user = await User.findOne({
+      where: {
+        email,
+        isVerified: true,
+      },
+      attributes: ["id", "name", "email"],
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "No verified user registered with this email",
+      });
+    }
+
+    const roomId = getPrivateRoomIdByEmail(req.user.email, user.email);
+
+    res.status(200).json({
+      success: true,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+      },
+      roomId,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
 export const getUsersList = async (req, res, next) => {
   try {
@@ -51,6 +102,7 @@ export const getUsersList = async (req, res, next) => {
     const recentMessages = await Message.findAll({
       where: {
         receiverId: { [Op.ne]: null },
+        groupId: null,
         [Op.or]: [{ senderId: req.user.id }, { receiverId: req.user.id }],
       },
       attributes: [
@@ -127,10 +179,125 @@ export const getUsersList = async (req, res, next) => {
   }
 };
 
+export const createGroup = async (req, res, next) => {
+  try {
+    const name = (req.body.name || "").trim();
+    const memberEmails = Array.isArray(req.body.memberEmails)
+      ? req.body.memberEmails
+      : [];
+
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        message: "Group name is required",
+      });
+    }
+
+    const cleanEmails = [
+      ...new Set(
+        memberEmails
+          .map((e) => String(e).trim().toLowerCase())
+          .filter((e) => e && e !== req.user.email.toLowerCase())
+      ),
+    ];
+
+    const matchedUsers = cleanEmails.length
+      ? await User.findAll({
+          where: {
+            email: { [Op.in]: cleanEmails },
+            isVerified: true,
+          },
+          attributes: ["id", "name", "email"],
+        })
+      : [];
+
+    const group = await Group.create({
+      name,
+      createdBy: req.user.id,
+    });
+
+    const allMemberIds = [req.user.id, ...matchedUsers.map((u) => u.id)];
+
+    await GroupMember.bulkCreate(
+      allMemberIds.map((userId) => ({
+        groupId: group.id,
+        userId,
+      })),
+      { ignoreDuplicates: true }
+    );
+
+    const groupPayload = {
+      id: group.id,
+      name: group.name,
+      createdBy: group.createdBy,
+      memberCount: allMemberIds.length,
+      members: [
+        { id: req.user.id, name: req.user.name, email: req.user.email },
+        ...matchedUsers,
+      ],
+    };
+
+    const io = getIO();
+    allMemberIds.forEach((memberId) => {
+      io.to(`user_${memberId}`).emit("group_created", groupPayload);
+    });
+
+    res.status(201).json({
+      success: true,
+      group: groupPayload,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getUserGroups = async (req, res, next) => {
+  try {
+    const memberships = await GroupMember.findAll({
+      where: { userId: req.user.id },
+      include: [
+        {
+          model: Group,
+          as: "group",
+          attributes: ["id", "name", "createdBy", "createdAt"],
+          include: [
+            {
+              model: User,
+              as: "members",
+              attributes: ["id", "name", "email"],
+              through: { attributes: [] },
+            },
+          ],
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+    });
+
+    const groups = memberships
+      .map((m) => m.group)
+      .filter(Boolean)
+      .map((g) => ({
+        id: g.id,
+        name: g.name,
+        createdBy: g.createdBy,
+        memberCount: g.members ? g.members.length : 1,
+        members: g.members || [],
+      }));
+
+    res.status(200).json({
+      success: true,
+      groups,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const sendMessage = async (req, res, next) => {
   try {
     const content = (req.body.content || "").trim();
     const receiverId = req.body.receiverId ? Number(req.body.receiverId) : null;
+    const groupId = req.body.groupId ? Number(req.body.groupId) : null;
 
     if (!content) {
       return res.status(400).json({
@@ -140,11 +307,38 @@ export const sendMessage = async (req, res, next) => {
     }
 
     const io = getIO();
-    const receiverOnline = receiverId ? isUserOnline(io, receiverId) : false;
+    let receiverOnline = false;
+    let targetUser = null;
+
+    if (receiverId) {
+      targetUser = await User.findByPk(receiverId, {
+        attributes: ["id", "email"],
+      });
+      if (!targetUser) {
+        return res.status(404).json({
+          success: false,
+          message: "Recipient user not found",
+        });
+      }
+      receiverOnline = isUserOnline(io, receiverId);
+    }
+
+    if (groupId) {
+      const membership = await GroupMember.findOne({
+        where: { groupId, userId: req.user.id },
+      });
+      if (!membership) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not a member of this group",
+        });
+      }
+    }
 
     const newMessage = await Message.create({
       senderId: req.user.id,
-      receiverId,
+      receiverId: groupId ? null : receiverId,
+      groupId: groupId || null,
       content,
       isDelivered: receiverOnline,
       isRead: false,
@@ -155,6 +349,7 @@ export const sendMessage = async (req, res, next) => {
         "id",
         "senderId",
         "receiverId",
+        "groupId",
         "content",
         "isDelivered",
         "isRead",
@@ -169,8 +364,13 @@ export const sendMessage = async (req, res, next) => {
       ],
     });
 
-    if (receiverId) {
-      const roomName = getPrivateRoomId(req.user.id, receiverId);
+    if (groupId) {
+      io.to(getGroupRoomId(groupId)).emit("new_message", fullMessage);
+    } else if (receiverId && targetUser) {
+      const roomName = getPrivateRoomIdByEmail(
+        req.user.email,
+        targetUser.email
+      );
       io.to(roomName).emit("new_message", fullMessage);
       io.to(`user_${receiverId}`).emit("contact_updated", fullMessage);
     } else {
@@ -189,17 +389,35 @@ export const sendMessage = async (req, res, next) => {
 export const getMessages = async (req, res, next) => {
   try {
     const targetUserId = req.query.userId ? Number(req.query.userId) : null;
+    const groupId = req.query.groupId ? Number(req.query.groupId) : null;
 
-    const whereClause = targetUserId
-      ? {
-          [Op.or]: [
-            { senderId: req.user.id, receiverId: targetUserId },
-            { senderId: targetUserId, receiverId: req.user.id },
-          ],
-        }
-      : {
-          receiverId: null,
-        };
+    let whereClause;
+
+    if (groupId) {
+      const membership = await GroupMember.findOne({
+        where: { groupId, userId: req.user.id },
+      });
+      if (!membership) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied to this group",
+        });
+      }
+      whereClause = { groupId };
+    } else if (targetUserId) {
+      whereClause = {
+        groupId: null,
+        [Op.or]: [
+          { senderId: req.user.id, receiverId: targetUserId },
+          { senderId: targetUserId, receiverId: req.user.id },
+        ],
+      };
+    } else {
+      whereClause = {
+        receiverId: null,
+        groupId: null,
+      };
+    }
 
     const messages = await Message.findAll({
       where: whereClause,
@@ -207,6 +425,7 @@ export const getMessages = async (req, res, next) => {
         "id",
         "senderId",
         "receiverId",
+        "groupId",
         "content",
         "isDelivered",
         "isRead",

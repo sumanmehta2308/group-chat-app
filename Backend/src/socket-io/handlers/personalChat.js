@@ -1,10 +1,12 @@
 import Message from "../../models/message.js";
 import User from "../../models/user.js";
 
-export const getPrivateRoomId = (userId1, userId2) => {
-  const first = Math.min(Number(userId1), Number(userId2));
-  const second = Math.max(Number(userId1), Number(userId2));
-  return `private_${first}_${second}`;
+export const getPrivateRoomIdByEmail = (email1, email2) => {
+  const sorted = [
+    String(email1).trim().toLowerCase(),
+    String(email2).trim().toLowerCase(),
+  ].sort();
+  return `private_${sorted[0]}_${sorted[1]}`;
 };
 
 export const isUserOnline = (io, userId) => {
@@ -13,7 +15,7 @@ export const isUserOnline = (io, userId) => {
 };
 
 export const registerPersonalChatHandlers = async (io, socket) => {
-  const { id, name } = socket.user;
+  const { id, name, email } = socket.user;
 
   try {
     const pendingMessages = await Message.findAll({
@@ -28,8 +30,13 @@ export const registerPersonalChatHandlers = async (io, socket) => {
       );
 
       const senderIds = [...new Set(pendingMessages.map((m) => m.senderId))];
-      senderIds.forEach((senderId) => {
-        const roomId = getPrivateRoomId(senderId, id);
+      const senders = await User.findAll({
+        where: { id: senderIds },
+        attributes: ["id", "email"],
+      });
+
+      senders.forEach((sender) => {
+        const roomId = getPrivateRoomIdByEmail(sender.email, email);
         io.to(roomId).emit("messages_delivered", { roomId, receiverId: id });
       });
     }
@@ -37,17 +44,38 @@ export const registerPersonalChatHandlers = async (io, socket) => {
     console.error("Delivery sync error:", error.message);
   }
 
-  socket.on("join_room", ({ roomId, targetUserId }) => {
-    const resolvedRoomId =
-      roomId || (targetUserId ? getPrivateRoomId(id, targetUserId) : null);
-    if (!resolvedRoomId) return;
+  socket.on("join_room", async ({ roomId, targetEmail }) => {
+    try {
+      let resolvedRoomId = roomId;
 
-    socket.join(resolvedRoomId);
-    socket.emit("room_joined", {
-      roomId: resolvedRoomId,
-      targetUserId: targetUserId ? Number(targetUserId) : null,
-      isOnline: targetUserId ? isUserOnline(io, targetUserId) : false,
-    });
+      if (targetEmail) {
+        const targetUser = await User.findOne({
+          where: {
+            email: String(targetEmail).trim().toLowerCase(),
+            isVerified: true,
+          },
+          attributes: ["id", "name", "email"],
+        });
+
+        if (!targetUser || targetUser.id === id) {
+          socket.emit("room_error", {
+            message: "No verified user found with this email address.",
+          });
+          return;
+        }
+
+        resolvedRoomId = getPrivateRoomIdByEmail(email, targetUser.email);
+      }
+
+      if (!resolvedRoomId) return;
+
+      socket.join(resolvedRoomId);
+      socket.emit("room_joined", {
+        roomId: resolvedRoomId,
+      });
+    } catch (error) {
+      socket.emit("room_error", { message: "Failed to join room" });
+    }
   });
 
   socket.on("leave_room", ({ roomId }) => {
@@ -59,7 +87,14 @@ export const registerPersonalChatHandlers = async (io, socket) => {
     try {
       if (!senderId) return;
       const targetSenderId = Number(senderId);
-      const resolvedRoomId = roomId || getPrivateRoomId(id, targetSenderId);
+
+      const senderUser = await User.findByPk(targetSenderId, {
+        attributes: ["id", "email"],
+      });
+      if (!senderUser) return;
+
+      const resolvedRoomId =
+        roomId || getPrivateRoomIdByEmail(email, senderUser.email);
 
       const [updatedCount] = await Message.update(
         { isDelivered: true, isRead: true },
@@ -92,13 +127,19 @@ export const registerPersonalChatHandlers = async (io, socket) => {
       const trimmed = (content || "").trim();
       if (!trimmed || !receiverId) return;
 
-      const targetId = Number(receiverId);
-      const resolvedRoomId = roomId || getPrivateRoomId(id, targetId);
-      const receiverOnline = isUserOnline(io, targetId);
+      const targetUser = await User.findByPk(Number(receiverId), {
+        attributes: ["id", "email"],
+      });
+      if (!targetUser) return;
+
+      const resolvedRoomId =
+        roomId || getPrivateRoomIdByEmail(email, targetUser.email);
+      const receiverOnline = isUserOnline(io, targetUser.id);
 
       const newMessage = await Message.create({
         senderId: id,
-        receiverId: targetId,
+        receiverId: targetUser.id,
+        groupId: null,
         content: trimmed,
         isDelivered: receiverOnline,
         isRead: false,
@@ -109,6 +150,7 @@ export const registerPersonalChatHandlers = async (io, socket) => {
           "id",
           "senderId",
           "receiverId",
+          "groupId",
           "content",
           "isDelivered",
           "isRead",
@@ -124,31 +166,27 @@ export const registerPersonalChatHandlers = async (io, socket) => {
       });
 
       io.to(resolvedRoomId).emit("new_message", fullMessage);
-      io.to(`user_${targetId}`).emit("contact_updated", fullMessage);
+      io.to(`user_${targetUser.id}`).emit("contact_updated", fullMessage);
     } catch (error) {
       console.error("Personal chat error:", error.message);
     }
   });
 
-  socket.on("private_typing", ({ roomId, targetUserId }) => {
-    const resolvedRoomId =
-      roomId || (targetUserId ? getPrivateRoomId(id, targetUserId) : null);
-    if (!resolvedRoomId) return;
-
-    socket.to(resolvedRoomId).emit("user_typing", {
+  socket.on("private_typing", ({ roomId }) => {
+    if (!roomId) return;
+    socket.to(roomId).emit("user_typing", {
       userId: id,
       name,
+      roomId,
       isPrivate: true,
     });
   });
 
-  socket.on("private_stop_typing", ({ roomId, targetUserId }) => {
-    const resolvedRoomId =
-      roomId || (targetUserId ? getPrivateRoomId(id, targetUserId) : null);
-    if (!resolvedRoomId) return;
-
-    socket.to(resolvedRoomId).emit("user_stop_typing", {
+  socket.on("private_stop_typing", ({ roomId }) => {
+    if (!roomId) return;
+    socket.to(roomId).emit("user_stop_typing", {
       userId: id,
+      roomId,
       isPrivate: true,
     });
   });
