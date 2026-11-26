@@ -14,6 +14,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
 const currentUserAvatar = document.getElementById("currentUserAvatar");
 const currentUserName = document.getElementById("currentUserName");
+const chatHeaderInfo = document.getElementById("chatHeaderInfo");
 const activeChatAvatar = document.getElementById("activeChatAvatar");
 const activeChatTitle = document.getElementById("activeChatTitle");
 const activeChatStatus = document.getElementById("activeChatStatus");
@@ -35,6 +36,12 @@ const mobileBackBtn = document.getElementById("mobileBackBtn");
 const globalRoomItem = document.getElementById("globalRoomItem");
 const chatAppShell = document.querySelector(".chat-app-shell");
 
+const attachMediaBtn = document.getElementById("attachMediaBtn");
+const mediaFileInput = document.getElementById("mediaFileInput");
+const selectedFileBar = document.getElementById("selectedFileBar");
+const selectedFileName = document.getElementById("selectedFileName");
+const clearSelectedFileBtn = document.getElementById("clearSelectedFileBtn");
+
 const openCreateGroupBtn = document.getElementById("openCreateGroupBtn");
 const createGroupModal = document.getElementById("createGroupModal");
 const closeCreateGroupBtn = document.getElementById("closeCreateGroupBtn");
@@ -43,6 +50,12 @@ const createGroupForm = document.getElementById("createGroupForm");
 const groupNameInput = document.getElementById("groupNameInput");
 const groupMembersInput = document.getElementById("groupMembersInput");
 
+const groupMembersModal = document.getElementById("groupMembersModal");
+const closeGroupMembersBtn = document.getElementById("closeGroupMembersBtn");
+const modalGroupName = document.getElementById("modalGroupName");
+const modalGroupCount = document.getElementById("modalGroupCount");
+const groupMembersList = document.getElementById("groupMembersList");
+
 let currentUser = null;
 let userGroups = [];
 let recentContacts = [];
@@ -50,6 +63,7 @@ let displayedUsers = [];
 let allMessages = [];
 let selectedUser = null;
 let selectedGroup = null;
+let selectedFile = null;
 let currentRoomId = "global_group";
 let socket = null;
 let typingTimeout = null;
@@ -84,7 +98,9 @@ function scrollToBottom() {
 
 function getDefaultStatusText() {
   if (selectedGroup) {
-    return `${selectedGroup.memberCount || 1} members • Group Room`;
+    return `${
+      selectedGroup.memberCount || 1
+    } members • Click header to view members`;
   }
   if (selectedUser) {
     return `${selectedUser.email} • Room: ${currentRoomId}`;
@@ -95,16 +111,67 @@ function getDefaultStatusText() {
 }
 
 function getMessageTickHtml(msg) {
-  if (selectedGroup || !selectedUser) {
+  if (!selectedGroup && !selectedUser) {
     return `<i class="bi bi-check2-all msg-status-icon seen"></i>`;
   }
   if (msg.isRead) {
-    return `<i class="bi bi-check2-all msg-status-icon seen" title="Seen"></i>`;
+    return `<i class="bi bi-check2-all msg-status-icon seen" title="Seen by all"></i>`;
   }
   if (msg.isDelivered) {
     return `<i class="bi bi-check2-all msg-status-icon" title="Delivered"></i>`;
   }
   return `<i class="bi bi-check2 msg-status-icon" title="Sent"></i>`;
+}
+
+function renderMediaContentHtml(msg) {
+  if (!msg.mediaUrl) return "";
+  const safeUrl = escapeHtml(msg.mediaUrl);
+  const safeName = escapeHtml(msg.fileName || "Attachment");
+
+  if (msg.mediaType === "image") {
+    return `
+      <div class="mb-1">
+        <a href="${safeUrl}" target="_blank" rel="noopener noreferrer">
+          <img
+            src="${safeUrl}"
+            alt="${safeName}"
+            class="img-fluid rounded"
+            style="max-height: 240px; object-fit: cover; cursor: pointer;"
+          />
+        </a>
+      </div>
+    `;
+  }
+
+  if (msg.mediaType === "video") {
+    return `
+      <div class="mb-1">
+        <video
+          src="${safeUrl}"
+          controls
+          class="rounded w-100"
+          style="max-height: 240px;"
+        ></video>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="mb-1 p-2 rounded border bg-white d-flex align-items-center justify-content-between gap-2">
+      <div class="small text-truncate text-dark">
+        <i class="bi bi-file-earmark-arrow-down-fill text-success me-1"></i>
+        ${safeName}
+      </div>
+      <a
+        href="${safeUrl}"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="btn btn-sm btn-outline-success py-0 px-2"
+      >
+        Open
+      </a>
+    </div>
+  `;
 }
 
 function renderGroupsSidebar() {
@@ -225,15 +292,16 @@ function upsertRecentContact(
 ) {
   if (!user) return;
   const existingIndex = recentContacts.findIndex((u) => u.id === user.id);
+  const previewLabel = lastMessageObj
+    ? lastMessageObj.content || `📎 ${lastMessageObj.fileName || "Media"}`
+    : null;
 
   if (existingIndex !== -1) {
     const existing = recentContacts[existingIndex];
     const updated = {
       ...existing,
       unreadCount: incrementUnread ? (existing.unreadCount || 0) + 1 : 0,
-      lastMessage: lastMessageObj
-        ? lastMessageObj.content
-        : existing.lastMessage,
+      lastMessage: previewLabel || existing.lastMessage,
       lastMessageTime: lastMessageObj
         ? lastMessageObj.createdAt
         : existing.lastMessageTime,
@@ -246,7 +314,7 @@ function upsertRecentContact(
       name: user.name,
       email: user.email,
       unreadCount: incrementUnread ? 1 : 0,
-      lastMessage: lastMessageObj ? lastMessageObj.content : user.email,
+      lastMessage: previewLabel || user.email,
       lastMessageTime: lastMessageObj ? lastMessageObj.createdAt : null,
     });
   }
@@ -270,7 +338,8 @@ function updateGroupSidebarPreview() {
   const senderPrefix = isOutgoing
     ? "You: "
     : `${last.sender?.name || "User"}: `;
-  sidebarLastPreview.textContent = `${senderPrefix}${last.content}`;
+  const bodyPreview = last.content || `📎 ${last.fileName || "Media"}`;
+  sidebarLastPreview.textContent = `${senderPrefix}${bodyPreview}`;
   sidebarLastTime.textContent = formatTimestamp(last.createdAt);
 }
 
@@ -294,13 +363,18 @@ function renderMessages() {
               msg.sender?.name || "Unknown"
             )}</div>`
           : "";
+      const mediaHtml = renderMediaContentHtml(msg);
+      const textHtml = msg.content
+        ? `<span class="msg-text">${escapeHtml(msg.content)}</span>`
+        : "";
       const tickHtml = isOutgoing ? getMessageTickHtml(msg) : "";
 
       return `
         <div class="msg-row ${rowClass}">
           <div class="msg-bubble">
             ${senderHtml}
-            <span class="msg-text">${escapeHtml(msg.content)}</span>
+            ${mediaHtml}
+            ${textHtml}
             <span class="msg-meta">
               <span>${escapeHtml(formatTimestamp(msg.createdAt))}</span>
               ${tickHtml}
@@ -339,6 +413,14 @@ function emitMarkAsRead(roomId, senderId) {
   }
 }
 
+function emitMarkGroupAsRead(groupId) {
+  if (socket && socket.connected && groupId) {
+    socket.emit("mark_group_read", {
+      groupId: Number(groupId),
+    });
+  }
+}
+
 function appendIncomingMessage(message) {
   if (!isMessageForActiveChat(message)) return;
 
@@ -349,7 +431,9 @@ function appendIncomingMessage(message) {
   updateGroupSidebarPreview();
   renderMessages();
 
-  if (selectedUser) {
+  if (selectedGroup && message.senderId !== currentUser.id) {
+    emitMarkGroupAsRead(selectedGroup.id);
+  } else if (selectedUser) {
     upsertRecentContact(selectedUser, message, false);
     if (message.senderId === selectedUser.id) {
       emitMarkAsRead(currentRoomId, selectedUser.id);
@@ -379,6 +463,7 @@ async function selectGlobalGroupChat() {
   activeChatTitle.textContent = "Group Chat Room";
   activeChatStatus.textContent = getDefaultStatusText();
   activeChatStatus.classList.remove("text-success", "fw-semibold");
+  chatHeaderInfo.style.cursor = "default";
   chatModeLabel.textContent = "GLOBAL GROUP MESSAGES";
   chatAppShell.classList.remove("show-sidebar");
 
@@ -400,11 +485,13 @@ async function selectCustomGroupChat(group) {
   activeChatTitle.textContent = group.name;
   activeChatStatus.textContent = getDefaultStatusText();
   activeChatStatus.classList.remove("text-success", "fw-semibold");
+  chatHeaderInfo.style.cursor = "pointer";
   chatModeLabel.textContent = `GROUP • ${group.name.toUpperCase()}`;
   chatAppShell.classList.remove("show-sidebar");
 
   if (socket && socket.connected) {
     socket.emit("join_group_room", { groupId: group.id });
+    emitMarkGroupAsRead(group.id);
   }
 
   renderUsersSidebar();
@@ -428,6 +515,7 @@ async function selectPersonalChat(user) {
   activeChatTitle.textContent = user.name;
   activeChatStatus.textContent = getDefaultStatusText();
   activeChatStatus.classList.remove("text-success", "fw-semibold");
+  chatHeaderInfo.style.cursor = "default";
   chatModeLabel.textContent = `PRIVATE CHAT • ${user.name.toUpperCase()}`;
   chatAppShell.classList.remove("show-sidebar");
 
@@ -443,6 +531,59 @@ async function selectPersonalChat(user) {
 
   await loadMessages({ targetUserId: user.id });
 }
+
+function openGroupMembersModal() {
+  if (!selectedGroup) return;
+  modalGroupName.textContent = selectedGroup.name;
+  const members = selectedGroup.members || [];
+  modalGroupCount.textContent = `${members.length} members`;
+
+  groupMembersList.innerHTML = members
+    .map((m) => {
+      const isAdmin = Number(m.id) === Number(selectedGroup.createdBy);
+      const isYou = Number(m.id) === Number(currentUser.id);
+      return `
+        <div class="d-flex align-items-center justify-content-between py-2 border-bottom">
+          <div class="d-flex align-items-center gap-2 overflow-hidden">
+            <div class="chat-avatar" style="width: 36px; height: 36px; font-size: 14px;">
+              ${escapeHtml(m.name.charAt(0).toUpperCase())}
+            </div>
+            <div class="overflow-hidden">
+              <div class="fw-semibold small text-truncate">
+                ${escapeHtml(m.name)} ${isYou ? "(You)" : ""}
+              </div>
+              <div class="text-muted text-truncate" style="font-size: 12px;">
+                ${escapeHtml(m.email)}
+              </div>
+            </div>
+          </div>
+          ${
+            isAdmin
+              ? `<span class="badge bg-success-subtle text-success border border-success-subtle">Admin</span>`
+              : ""
+          }
+        </div>
+      `;
+    })
+    .join("");
+
+  groupMembersModal.classList.remove("d-none");
+  groupMembersModal.classList.add("d-flex");
+}
+
+function closeGroupMembersModal() {
+  groupMembersModal.classList.add("d-none");
+  groupMembersModal.classList.remove("d-flex");
+}
+
+chatHeaderInfo.addEventListener("click", (e) => {
+  if (e.target.closest("#mobileBackBtn")) return;
+  if (selectedGroup) {
+    openGroupMembersModal();
+  }
+});
+
+closeGroupMembersBtn.addEventListener("click", closeGroupMembersModal);
 
 function connectSocket() {
   const token = localStorage.getItem("token");
@@ -463,6 +604,7 @@ function connectSocket() {
       emitMarkAsRead(currentRoomId, selectedUser.id);
     } else if (selectedGroup) {
       socket.emit("join_group_room", { groupId: selectedGroup.id });
+      emitMarkGroupAsRead(selectedGroup.id);
     }
   });
 
@@ -480,6 +622,20 @@ function connectSocket() {
       socket.emit("join_group_room", { groupId: newGroup.id });
     }
   });
+
+  socket.on(
+    "group_message_status_updated",
+    ({ messageId, groupId, isDelivered, isRead }) => {
+      if (!selectedGroup || Number(selectedGroup.id) !== Number(groupId))
+        return;
+      const msg = allMessages.find((m) => Number(m.id) === Number(messageId));
+      if (msg) {
+        msg.isDelivered = isDelivered;
+        msg.isRead = isRead;
+        renderMessages();
+      }
+    }
+  );
 
   socket.on("messages_delivered", ({ roomId }) => {
     if (roomId !== currentRoomId) return;
@@ -600,6 +756,26 @@ async function loadGroups() {
   }
 }
 
+attachMediaBtn.addEventListener("click", () => {
+  mediaFileInput.click();
+});
+
+mediaFileInput.addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  selectedFile = file;
+  selectedFileName.textContent = file.name;
+  selectedFileBar.classList.remove("d-none");
+});
+
+function clearSelectedMedia() {
+  selectedFile = null;
+  mediaFileInput.value = "";
+  selectedFileBar.classList.add("d-none");
+}
+
+clearSelectedFileBtn.addEventListener("click", clearSelectedMedia);
+
 directEmailJoinForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const email = chatSearchInput.value.trim();
@@ -666,7 +842,7 @@ messageInput.addEventListener("input", () => {
 messageForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const content = messageInput.value.trim();
-  if (!content) return;
+  if (!content && !selectedFile) return;
 
   try {
     sendBtn.disabled = true;
@@ -684,6 +860,7 @@ messageForm.addEventListener("submit", async (e) => {
     const res = await postChatMessage(content, {
       receiverId: selectedUser ? selectedUser.id : null,
       groupId: selectedGroup ? selectedGroup.id : null,
+      file: selectedFile,
     });
 
     if (res.success && res.message) {
@@ -692,6 +869,7 @@ messageForm.addEventListener("submit", async (e) => {
         upsertRecentContact(selectedUser, res.message, false);
       }
       messageInput.value = "";
+      clearSelectedMedia();
     }
   } catch (err) {
     alert(err.message || "Failed to send message");

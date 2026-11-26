@@ -8,6 +8,7 @@ import "./src/models/user.js";
 import "./src/models/group.js";
 import "./src/models/groupMember.js";
 import "./src/models/message.js";
+import "./src/models/groupMessageReceipt.js";
 import { initSocket } from "./src/socket-io/index.js";
 
 const PORT = process.env.PORT || 3000;

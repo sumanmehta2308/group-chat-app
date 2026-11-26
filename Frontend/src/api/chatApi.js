@@ -1,5 +1,7 @@
 import { apiRequest } from "./authApi.js";
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
+
 export function fetchUsersList(search = "") {
   const query = search.trim()
     ? `?search=${encodeURIComponent(search.trim())}`
@@ -42,12 +44,28 @@ export function fetchAllMessages({ targetUserId = null, groupId = null } = {}) {
   });
 }
 
-export function postChatMessage(
+export async function postChatMessage(
   content,
-  { receiverId = null, groupId = null } = {}
+  { receiverId = null, groupId = null, file = null } = {}
 ) {
-  return apiRequest("/api/chat/messages", {
+  const token = localStorage.getItem("token");
+  const formData = new FormData();
+  if (content) formData.append("content", content);
+  if (receiverId) formData.append("receiverId", String(receiverId));
+  if (groupId) formData.append("groupId", String(groupId));
+  if (file) formData.append("media", file);
+
+  const response = await fetch(`${API_BASE_URL}/api/chat/messages`, {
     method: "POST",
-    body: JSON.stringify({ content, receiverId, groupId }),
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: formData,
   });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.message || "Failed to send message");
+  }
+  return data;
 }

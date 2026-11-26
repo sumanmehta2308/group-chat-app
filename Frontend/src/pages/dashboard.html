@@ -69,7 +69,7 @@
 
       <section class="chat-main" id="chatMain">
         <header class="chat-header">
-          <div class="d-flex align-items-center gap-2 overflow-hidden">
+          <div class="d-flex align-items-center gap-2 overflow-hidden" id="chatHeaderInfo">
             <button
               type="button"
               class="icon-btn sidebar-toggle-btn"
@@ -104,13 +104,40 @@
           <i class="bi bi-chevron-down"></i>
         </button>
 
+        <div
+          id="selectedFileBar"
+          class="d-none px-3 py-2 bg-light border-top d-flex align-items-center justify-content-between"
+        >
+          <div class="small text-truncate text-dark">
+            <i class="bi bi-paperclip me-1 text-success"></i>
+            <span id="selectedFileName">file.png</span>
+          </div>
+          <button type="button" class="btn btn-sm text-danger p-0" id="clearSelectedFileBtn">
+            <i class="bi bi-x-circle-fill"></i>
+          </button>
+        </div>
+
         <footer class="chat-composer">
           <form id="messageForm" class="composer-form">
+            <input
+              type="file"
+              id="mediaFileInput"
+              class="d-none"
+              accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.zip"
+            />
+            <button
+              type="button"
+              id="attachMediaBtn"
+              class="icon-btn"
+              title="Attach Image, Video or File"
+            >
+              <i class="bi bi-paperclip fs-5"></i>
+            </button>
             <input
               type="text"
               id="messageInput"
               class="composer-input"
-              placeholder="Type a message"
+              placeholder="Type a message or attach media"
               autocomplete="off"
             />
             <button type="submit" id="sendBtn" class="send-btn" title="Send">
@@ -163,6 +190,25 @@
             </button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <div
+      id="groupMembersModal"
+      class="d-none position-fixed top-0 start-0 w-100 h-100 align-items-center justify-content-center"
+      style="background: rgba(11, 20, 26, 0.55); z-index: 1050;"
+    >
+      <div class="bg-white rounded-3 p-4 shadow" style="width: 92%; max-width: 420px;">
+        <div class="d-flex align-items-center justify-content-between mb-3">
+          <div>
+            <h5 class="mb-0 fw-semibold" id="modalGroupName">Group Info</h5>
+            <small class="text-muted" id="modalGroupCount">0 members</small>
+          </div>
+          <button type="button" class="icon-btn" id="closeGroupMembersBtn">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+        <div id="groupMembersList" style="max-height: 280px; overflow-y: auto;"></div>
       </div>
     </div>
 

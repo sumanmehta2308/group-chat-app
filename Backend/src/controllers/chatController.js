@@ -9,7 +9,8 @@ import {
   isUserOnline,
 } from "../socket-io/handlers/personalChat.js";
 import { getGroupRoomId } from "../socket-io/handlers/groupChat.js";
-
+import GroupMessageReceipt from "../models/groupMessageReceipt.js";
+import { uploadFileToS3 } from "../config/s3.js";
 export const verifyUserByEmail = async (req, res, next) => {
   try {
     const email = (req.query.email || "").trim().toLowerCase();
@@ -293,22 +294,30 @@ export const getUserGroups = async (req, res, next) => {
   }
 };
 
+function detectMediaCategory(mimetype = "") {
+  if (mimetype.startsWith("image/")) return "image";
+  if (mimetype.startsWith("video/")) return "video";
+  return "file";
+}
+
 export const sendMessage = async (req, res, next) => {
   try {
     const content = (req.body.content || "").trim();
     const receiverId = req.body.receiverId ? Number(req.body.receiverId) : null;
     const groupId = req.body.groupId ? Number(req.body.groupId) : null;
+    const uploadedFile = req.file || null;
 
-    if (!content) {
+    if (!content && !uploadedFile) {
       return res.status(400).json({
         success: false,
-        message: "Message content cannot be empty",
+        message: "Message content or media file is required",
       });
     }
 
     const io = getIO();
     let receiverOnline = false;
     let targetUser = null;
+    let otherGroupMembers = [];
 
     if (receiverId) {
       targetUser = await User.findByPk(receiverId, {
@@ -324,15 +333,38 @@ export const sendMessage = async (req, res, next) => {
     }
 
     if (groupId) {
-      const membership = await GroupMember.findOne({
-        where: { groupId, userId: req.user.id },
+      const members = await GroupMember.findAll({
+        where: { groupId },
+        attributes: ["userId"],
       });
-      if (!membership) {
+      const isMember = members.some((m) => m.userId === req.user.id);
+      if (!isMember) {
         return res.status(403).json({
           success: false,
           message: "You are not a member of this group",
         });
       }
+      otherGroupMembers = members
+        .map((m) => m.userId)
+        .filter((uid) => uid !== req.user.id);
+    }
+
+    let mediaUrl = null;
+    let mediaType = null;
+    let fileName = null;
+
+    if (uploadedFile) {
+      const s3Result = await uploadFileToS3(uploadedFile);
+      mediaUrl = s3Result.fileUrl;
+      mediaType = detectMediaCategory(s3Result.mimeType);
+      fileName = s3Result.fileName;
+    }
+
+    let initialDelivered = receiverOnline;
+    if (groupId) {
+      initialDelivered =
+        otherGroupMembers.length > 0 &&
+        otherGroupMembers.every((uid) => isUserOnline(io, uid));
     }
 
     const newMessage = await Message.create({
@@ -340,9 +372,24 @@ export const sendMessage = async (req, res, next) => {
       receiverId: groupId ? null : receiverId,
       groupId: groupId || null,
       content,
-      isDelivered: receiverOnline,
+      mediaUrl,
+      mediaType,
+      fileName,
+      isDelivered: initialDelivered,
       isRead: false,
     });
+
+    if (groupId && otherGroupMembers.length > 0) {
+      await GroupMessageReceipt.bulkCreate(
+        otherGroupMembers.map((uid) => ({
+          messageId: newMessage.id,
+          groupId,
+          userId: uid,
+          isDelivered: isUserOnline(io, uid),
+          isRead: false,
+        }))
+      );
+    }
 
     const fullMessage = await Message.findByPk(newMessage.id, {
       attributes: [
@@ -351,6 +398,9 @@ export const sendMessage = async (req, res, next) => {
         "receiverId",
         "groupId",
         "content",
+        "mediaUrl",
+        "mediaType",
+        "fileName",
         "isDelivered",
         "isRead",
         "createdAt",
@@ -427,6 +477,9 @@ export const getMessages = async (req, res, next) => {
         "receiverId",
         "groupId",
         "content",
+        "mediaUrl",
+        "mediaType",
+        "fileName",
         "isDelivered",
         "isRead",
         "createdAt",
