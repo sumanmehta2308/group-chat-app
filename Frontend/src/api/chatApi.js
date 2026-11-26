@@ -33,6 +33,12 @@ export function createNewGroup(name, memberEmails) {
   });
 }
 
+export function removeMemberFromGroupApi(groupId, userId) {
+  return apiRequest(`/api/chat/groups/${groupId}/members/${userId}`, {
+    method: "DELETE",
+  });
+}
+
 export function fetchAllMessages({ targetUserId = null, groupId = null } = {}) {
   const params = new URLSearchParams();
   if (groupId) params.set("groupId", String(groupId));
@@ -46,13 +52,14 @@ export function fetchAllMessages({ targetUserId = null, groupId = null } = {}) {
 
 export async function postChatMessage(
   content,
-  { receiverId = null, groupId = null, file = null } = {}
+  { receiverId = null, groupId = null, file = null, clientTempId = null } = {}
 ) {
   const token = localStorage.getItem("token");
   const formData = new FormData();
   if (content) formData.append("content", content);
   if (receiverId) formData.append("receiverId", String(receiverId));
   if (groupId) formData.append("groupId", String(groupId));
+  if (clientTempId) formData.append("clientTempId", String(clientTempId));
   if (file) formData.append("media", file);
 
   const response = await fetch(`${API_BASE_URL}/api/chat/messages`, {
@@ -68,4 +75,25 @@ export async function postChatMessage(
     throw new Error(data.message || "Failed to send message");
   }
   return data;
+}
+
+export function deleteChatMessageApi(messageId, mode = "me") {
+  return apiRequest(`/api/chat/messages/${messageId}/delete`, {
+    method: "POST",
+    body: JSON.stringify({ mode }),
+  });
+}
+
+export function fetchAiSmartRepliesApi(recentContext, userStyle) {
+  return apiRequest("/api/chat/ai/smart-replies", {
+    method: "POST",
+    body: JSON.stringify({ recentContext, userStyle }),
+  });
+}
+
+export function fetchAiPredictiveApi(partialText, recentContext, userStyle) {
+  return apiRequest("/api/chat/ai/predict", {
+    method: "POST",
+    body: JSON.stringify({ partialText, recentContext, userStyle }),
+  });
 }

@@ -1,16 +1,49 @@
 import { Op } from "sequelize";
-import Message from "../models/message.js";
 import User from "../models/user.js";
+import Message from "../models/message.js";
 import Group from "../models/group.js";
 import GroupMember from "../models/groupMember.js";
-import { getIO } from "../socket-io/index.js";
-import {
-  getPrivateRoomIdByEmail,
-  isUserOnline,
-} from "../socket-io/handlers/personalChat.js";
-import { getGroupRoomId } from "../socket-io/handlers/groupChat.js";
 import GroupMessageReceipt from "../models/groupMessageReceipt.js";
+import { getIO, isUserOnline } from "../socket-io/index.js";
+import { getPrivateRoomIdByEmail } from "../socket-io/handlers/personalChat.js";
+import { getGroupRoomId } from "../socket-io/handlers/groupChat.js";
 import { uploadFileToS3 } from "../config/s3.js";
+import {
+  generatePredictiveCompletions,
+  generateSmartReplies,
+} from "../services/geminiService.js";
+
+const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+
+function detectMediaCategory(mimetype = "") {
+  if (mimetype.startsWith("image/")) return "image";
+  if (mimetype.startsWith("video/")) return "video";
+  return "file";
+}
+
+function parseDeletedUsers(raw) {
+  try {
+    const parsed = JSON.parse(raw || "[]");
+    return Array.isArray(parsed) ? parsed.map(Number) : [];
+  } catch {
+    return [];
+  }
+}
+
+function formatMessageForUser(msgObj, currentUserId) {
+  const plain = msgObj.toJSON ? msgObj.toJSON() : { ...msgObj };
+  if (plain.isDeletedForEveryone) {
+    return {
+      ...plain,
+      content: "🚫 This message was deleted",
+      mediaUrl: null,
+      mediaType: null,
+      fileName: null,
+    };
+  }
+  return plain;
+}
+
 export const verifyUserByEmail = async (req, res, next) => {
   try {
     const email = (req.query.email || "").trim().toLowerCase();
@@ -29,30 +62,20 @@ export const verifyUserByEmail = async (req, res, next) => {
     }
 
     const user = await User.findOne({
-      where: {
-        email,
-        isVerified: true,
-      },
+      where: { email },
       attributes: ["id", "name", "email"],
     });
 
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "No verified user registered with this email",
+        message: "No registered user found with this email",
       });
     }
 
-    const roomId = getPrivateRoomIdByEmail(req.user.email, user.email);
-
     res.status(200).json({
       success: true,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-      },
-      roomId,
+      user,
     });
   } catch (error) {
     next(error);
@@ -64,116 +87,73 @@ export const getUsersList = async (req, res, next) => {
     const search = (req.query.search || "").trim().toLowerCase();
 
     if (search) {
-      if (search.length < 3) {
-        return res.status(200).json({
-          success: true,
-          users: [],
-        });
-      }
-
       const users = await User.findAll({
         where: {
           id: { [Op.ne]: req.user.id },
-          isVerified: true,
           [Op.or]: [
-            { email: { [Op.like]: `%${search}%` } },
             { name: { [Op.like]: `%${search}%` } },
+            { email: { [Op.like]: `%${search}%` } },
           ],
         },
         attributes: ["id", "name", "email"],
-        limit: 10,
         order: [["name", "ASC"]],
       });
 
-      const formattedSearchUsers = users.map((u) => ({
-        id: u.id,
-        name: u.name,
-        email: u.email,
-        unreadCount: 0,
-        lastMessage: u.email,
-        lastMessageTime: null,
-      }));
-
       return res.status(200).json({
         success: true,
-        users: formattedSearchUsers,
+        users,
       });
     }
 
     const recentMessages = await Message.findAll({
       where: {
-        receiverId: { [Op.ne]: null },
         groupId: null,
-        [Op.or]: [{ senderId: req.user.id }, { receiverId: req.user.id }],
+        [Op.or]: [
+          { senderId: req.user.id, receiverId: { [Op.ne]: null } },
+          { receiverId: req.user.id },
+        ],
       },
-      attributes: [
-        "id",
-        "senderId",
-        "receiverId",
-        "content",
-        "isRead",
-        "createdAt",
+      include: [
+        { model: User, as: "sender", attributes: ["id", "name", "email"] },
+        { model: User, as: "receiver", attributes: ["id", "name", "email"] },
       ],
       order: [["createdAt", "DESC"]],
     });
 
-    const contactIds = [];
-    const contactMeta = new Map();
+    const contactMap = new Map();
 
     for (const msg of recentMessages) {
-      const otherId =
-        msg.senderId === req.user.id ? msg.receiverId : msg.senderId;
-      if (!otherId) continue;
+      const deletedFor = parseDeletedUsers(msg.deletedForUserIds);
+      if (deletedFor.includes(Number(req.user.id))) continue;
 
-      if (!contactMeta.has(otherId)) {
-        contactIds.push(otherId);
-        contactMeta.set(otherId, {
+      const isOutgoing = msg.senderId === req.user.id;
+      const partner = isOutgoing ? msg.receiver : msg.sender;
+      if (!partner) continue;
+
+      const previewText = msg.isDeletedForEveryone
+        ? "🚫 Message deleted"
+        : msg.content || `📎 ${msg.fileName || "Attachment"}`;
+
+      if (!contactMap.has(partner.id)) {
+        contactMap.set(partner.id, {
+          id: partner.id,
+          name: partner.name,
+          email: partner.email,
           unreadCount: 0,
-          lastMessage: msg.content,
+          lastMessage: previewText,
           lastMessageTime: msg.createdAt,
         });
       }
 
-      if (msg.receiverId === req.user.id && !msg.isRead) {
-        const current = contactMeta.get(otherId);
-        current.unreadCount += 1;
+      if (!isOutgoing && !msg.isRead && !msg.isDeletedForEveryone) {
+        const entry = contactMap.get(partner.id);
+        entry.unreadCount += 1;
       }
     }
 
-    if (contactIds.length === 0) {
-      return res.status(200).json({
-        success: true,
-        users: [],
-      });
-    }
-
-    const users = await User.findAll({
-      where: {
-        id: { [Op.in]: contactIds },
-        isVerified: true,
-      },
-      attributes: ["id", "name", "email"],
-    });
-
-    const orderedUsers = contactIds
-      .map((id) => {
-        const userObj = users.find((u) => u.id === id);
-        if (!userObj) return null;
-        const meta = contactMeta.get(id);
-        return {
-          id: userObj.id,
-          name: userObj.name,
-          email: userObj.email,
-          unreadCount: meta.unreadCount,
-          lastMessage: meta.lastMessage,
-          lastMessageTime: meta.lastMessageTime,
-        };
-      })
-      .filter(Boolean);
-
     res.status(200).json({
       success: true,
-      users: orderedUsers,
+      users: Array.from(contactMap.values()),
     });
   } catch (error) {
     next(error);
@@ -194,7 +174,7 @@ export const createGroup = async (req, res, next) => {
       });
     }
 
-    const cleanEmails = [
+    const normalizedEmails = [
       ...new Set(
         memberEmails
           .map((e) => String(e).trim().toLowerCase())
@@ -202,36 +182,32 @@ export const createGroup = async (req, res, next) => {
       ),
     ];
 
-    const matchedUsers = cleanEmails.length
-      ? await User.findAll({
-          where: {
-            email: { [Op.in]: cleanEmails },
-            isVerified: true,
-          },
-          attributes: ["id", "name", "email"],
-        })
-      : [];
+    const matchedUsers =
+      normalizedEmails.length > 0
+        ? await User.findAll({
+            where: { email: { [Op.in]: normalizedEmails } },
+            attributes: ["id", "name", "email"],
+          })
+        : [];
 
     const group = await Group.create({
       name,
       createdBy: req.user.id,
     });
 
-    const allMemberIds = [req.user.id, ...matchedUsers.map((u) => u.id)];
-
+    const memberIds = [req.user.id, ...matchedUsers.map((u) => u.id)];
     await GroupMember.bulkCreate(
-      allMemberIds.map((userId) => ({
+      memberIds.map((userId) => ({
         groupId: group.id,
         userId,
-      })),
-      { ignoreDuplicates: true }
+      }))
     );
 
     const groupPayload = {
       id: group.id,
       name: group.name,
       createdBy: group.createdBy,
-      memberCount: allMemberIds.length,
+      memberCount: memberIds.length,
       members: [
         { id: req.user.id, name: req.user.name, email: req.user.email },
         ...matchedUsers,
@@ -239,8 +215,8 @@ export const createGroup = async (req, res, next) => {
     };
 
     const io = getIO();
-    allMemberIds.forEach((memberId) => {
-      io.to(`user_${memberId}`).emit("group_created", groupPayload);
+    memberIds.forEach((uid) => {
+      io.to(`user_${uid}`).emit("group_created", groupPayload);
     });
 
     res.status(201).json({
@@ -254,36 +230,50 @@ export const createGroup = async (req, res, next) => {
 
 export const getUserGroups = async (req, res, next) => {
   try {
-    const memberships = await GroupMember.findAll({
+    const myMemberships = await GroupMember.findAll({
       where: { userId: req.user.id },
-      include: [
-        {
-          model: Group,
-          as: "group",
-          attributes: ["id", "name", "createdBy", "createdAt"],
-          include: [
-            {
-              model: User,
-              as: "members",
-              attributes: ["id", "name", "email"],
-              through: { attributes: [] },
-            },
-          ],
-        },
-      ],
+      attributes: ["groupId"],
+    });
+
+    const groupIds = myMemberships.map((m) => m.groupId);
+    if (groupIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        groups: [],
+      });
+    }
+
+    const groupRecords = await Group.findAll({
+      where: { id: { [Op.in]: groupIds } },
       order: [["createdAt", "DESC"]],
     });
 
-    const groups = memberships
-      .map((m) => m.group)
-      .filter(Boolean)
-      .map((g) => ({
+    const allMemberships = await GroupMember.findAll({
+      where: { groupId: { [Op.in]: groupIds } },
+      attributes: ["groupId", "userId"],
+    });
+
+    const allUserIds = [...new Set(allMemberships.map((m) => m.userId))];
+    const users = await User.findAll({
+      where: { id: { [Op.in]: allUserIds } },
+      attributes: ["id", "name", "email"],
+    });
+    const userMap = new Map(users.map((u) => [u.id, u.toJSON()]));
+
+    const groups = groupRecords.map((g) => {
+      const members = allMemberships
+        .filter((m) => Number(m.groupId) === Number(g.id))
+        .map((m) => userMap.get(m.userId))
+        .filter(Boolean);
+
+      return {
         id: g.id,
         name: g.name,
         createdBy: g.createdBy,
-        memberCount: g.members ? g.members.length : 1,
-        members: g.members || [],
-      }));
+        memberCount: members.length,
+        members,
+      };
+    });
 
     res.status(200).json({
       success: true,
@@ -294,17 +284,70 @@ export const getUserGroups = async (req, res, next) => {
   }
 };
 
-function detectMediaCategory(mimetype = "") {
-  if (mimetype.startsWith("image/")) return "image";
-  if (mimetype.startsWith("video/")) return "video";
-  return "file";
-}
+export const removeGroupMember = async (req, res, next) => {
+  try {
+    const groupId = Number(req.params.groupId);
+    const targetUserId = Number(req.params.userId);
+
+    const group = await Group.findByPk(groupId);
+    if (!group) {
+      return res.status(404).json({
+        success: false,
+        message: "Group not found",
+      });
+    }
+
+    if (Number(group.createdBy) !== Number(req.user.id)) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the group admin can remove members",
+      });
+    }
+
+    if (targetUserId === Number(group.createdBy)) {
+      return res.status(400).json({
+        success: false,
+        message: "Group admin cannot be removed",
+      });
+    }
+
+    const deletedCount = await GroupMember.destroy({
+      where: { groupId, userId: targetUserId },
+    });
+
+    if (deletedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Member not found in this group",
+      });
+    }
+
+    const io = getIO();
+    io.to(getGroupRoomId(groupId)).emit("group_member_removed", {
+      groupId,
+      removedUserId: targetUserId,
+    });
+    io.to(`user_${targetUserId}`).emit("group_member_removed", {
+      groupId,
+      removedUserId: targetUserId,
+    });
+
+    res.status(200).json({
+      success: true,
+      groupId,
+      removedUserId: targetUserId,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
 export const sendMessage = async (req, res, next) => {
   try {
     const content = (req.body.content || "").trim();
     const receiverId = req.body.receiverId ? Number(req.body.receiverId) : null;
     const groupId = req.body.groupId ? Number(req.body.groupId) : null;
+    const clientTempId = req.body.clientTempId || null;
     const uploadedFile = req.file || null;
 
     if (!content && !uploadedFile) {
@@ -391,7 +434,7 @@ export const sendMessage = async (req, res, next) => {
       );
     }
 
-    const fullMessage = await Message.findByPk(newMessage.id, {
+    const fullMessageRecord = await Message.findByPk(newMessage.id, {
       attributes: [
         "id",
         "senderId",
@@ -403,6 +446,7 @@ export const sendMessage = async (req, res, next) => {
         "fileName",
         "isDelivered",
         "isRead",
+        "isDeletedForEveryone",
         "createdAt",
       ],
       include: [
@@ -414,22 +458,119 @@ export const sendMessage = async (req, res, next) => {
       ],
     });
 
+    const payload = {
+      ...fullMessageRecord.toJSON(),
+      clientTempId,
+    };
+
     if (groupId) {
-      io.to(getGroupRoomId(groupId)).emit("new_message", fullMessage);
+      io.to(getGroupRoomId(groupId)).emit("new_message", payload);
     } else if (receiverId && targetUser) {
       const roomName = getPrivateRoomIdByEmail(
         req.user.email,
         targetUser.email
       );
-      io.to(roomName).emit("new_message", fullMessage);
-      io.to(`user_${receiverId}`).emit("contact_updated", fullMessage);
+      io.to(roomName).emit("new_message", payload);
+      io.to(`user_${receiverId}`).emit("contact_updated", payload);
     } else {
-      io.to("global_group").emit("new_message", fullMessage);
+      io.to("global_group").emit("new_message", payload);
     }
 
     res.status(201).json({
       success: true,
-      message: fullMessage,
+      message: payload,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteMessage = async (req, res, next) => {
+  try {
+    const messageId = Number(req.params.messageId);
+    const mode = req.body.mode === "everyone" ? "everyone" : "me";
+
+    const message = await Message.findByPk(messageId, {
+      include: [
+        { model: User, as: "sender", attributes: ["id", "email"] },
+        { model: User, as: "receiver", attributes: ["id", "email"] },
+      ],
+    });
+
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: "Message not found",
+      });
+    }
+
+    if (mode === "me") {
+      const deletedFor = parseDeletedUsers(message.deletedForUserIds);
+      if (!deletedFor.includes(Number(req.user.id))) {
+        deletedFor.push(Number(req.user.id));
+        message.deletedForUserIds = JSON.stringify(deletedFor);
+        await message.save();
+      }
+      return res.status(200).json({
+        success: true,
+        mode: "me",
+        messageId,
+      });
+    }
+
+    if (Number(message.senderId) !== Number(req.user.id)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only delete your own messages for everyone",
+      });
+    }
+
+    const ageMs = Date.now() - new Date(message.createdAt).getTime();
+    if (ageMs > FIFTEEN_MINUTES_MS) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Delete for everyone is only available within 15 minutes of sending",
+      });
+    }
+
+    message.isDeletedForEveryone = true;
+    message.content = "";
+    message.mediaUrl = null;
+    message.mediaType = null;
+    message.fileName = null;
+    await message.save();
+
+    const io = getIO();
+    const deleteEventPayload = {
+      messageId: message.id,
+      groupId: message.groupId,
+      senderId: message.senderId,
+      receiverId: message.receiverId,
+    };
+
+    if (message.groupId) {
+      io.to(getGroupRoomId(message.groupId)).emit(
+        "message_deleted_everyone",
+        deleteEventPayload
+      );
+    } else if (message.receiverId && message.sender && message.receiver) {
+      const roomName = getPrivateRoomIdByEmail(
+        message.sender.email,
+        message.receiver.email
+      );
+      io.to(roomName).emit("message_deleted_everyone", deleteEventPayload);
+    } else {
+      io.to("global_group").emit(
+        "message_deleted_everyone",
+        deleteEventPayload
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      mode: "everyone",
+      messageId: message.id,
     });
   } catch (error) {
     next(error);
@@ -469,7 +610,7 @@ export const getMessages = async (req, res, next) => {
       };
     }
 
-    const messages = await Message.findAll({
+    const records = await Message.findAll({
       where: whereClause,
       attributes: [
         "id",
@@ -482,6 +623,8 @@ export const getMessages = async (req, res, next) => {
         "fileName",
         "isDelivered",
         "isRead",
+        "isDeletedForEveryone",
+        "deletedForUserIds",
         "createdAt",
       ],
       include: [
@@ -494,9 +637,62 @@ export const getMessages = async (req, res, next) => {
       order: [["createdAt", "ASC"]],
     });
 
+    const visibleMessages = records
+      .filter((m) => {
+        const deletedFor = parseDeletedUsers(m.deletedForUserIds);
+        return !deletedFor.includes(Number(req.user.id));
+      })
+      .map((m) => formatMessageForUser(m, req.user.id));
+
     res.status(200).json({
       success: true,
-      messages,
+      messages: visibleMessages,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getAiSmartReplies = async (req, res, next) => {
+  try {
+    const recentContext = Array.isArray(req.body.recentContext)
+      ? req.body.recentContext
+      : [];
+    const userStyle =
+      req.body.userStyle || "friendly, natural, concise with light emojis";
+
+    const replies = await generateSmartReplies({
+      recentContext,
+      userStyle,
+    });
+
+    res.status(200).json({
+      success: true,
+      replies,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getAiPredictiveTyping = async (req, res, next) => {
+  try {
+    const partialText = String(req.body.partialText || "");
+    const recentContext = Array.isArray(req.body.recentContext)
+      ? req.body.recentContext
+      : [];
+    const userStyle =
+      req.body.userStyle || "friendly, natural, concise with light emojis";
+
+    const suggestions = await generatePredictiveCompletions({
+      partialText,
+      recentContext,
+      userStyle,
+    });
+
+    res.status(200).json({
+      success: true,
+      suggestions,
     });
   } catch (error) {
     next(error);

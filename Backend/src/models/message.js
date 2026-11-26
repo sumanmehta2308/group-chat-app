@@ -67,6 +67,16 @@ const Message = sequelize.define(
       allowNull: false,
       defaultValue: false,
     },
+    isDeletedForEveryone: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    deletedForUserIds: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      defaultValue: "[]",
+    },
   },
   {
     tableName: "messages",

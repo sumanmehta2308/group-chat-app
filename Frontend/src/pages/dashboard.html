@@ -104,7 +104,31 @@
           <i class="bi bi-chevron-down"></i>
         </button>
 
-     <div
+        <div
+          id="aiSuggestionsBar"
+          class="d-none px-3 py-2 bg-white border-top"
+          style="border-bottom: 1px solid #eef2f5;"
+        >
+          <div class="d-flex align-items-center justify-content-between mb-1">
+            <span class="text-muted fw-semibold" style="font-size: 11px;">
+              <i class="bi bi-stars text-success me-1"></i>
+              <span id="aiBarLabel">Gemini Smart Suggestions</span>
+            </span>
+            <select
+              id="aiStyleSelect"
+              class="form-select form-select-sm py-0 px-2"
+              style="width: auto; font-size: 11px; height: 22px;"
+              title="AI Personalization Tone"
+            >
+              <option value="casual, friendly, concise with emojis">Casual + Emoji</option>
+              <option value="polite, clear, professional tone">Professional</option>
+              <option value="short Hinglish conversational style">Hinglish</option>
+            </select>
+          </div>
+          <div id="aiChipsContainer" class="d-flex flex-wrap gap-1"></div>
+        </div>
+
+        <div
           id="selectedFileBar"
           class="d-none px-3 py-2 bg-white border-top shadow-sm"
           style="border-left: 4px solid #00a884;"
@@ -138,7 +162,7 @@
           </div>
         </div>
 
-        <footer class="chat-composer">
+       <footer class="chat-composer">
           <form id="messageForm" class="composer-form">
             <input
               type="file"
@@ -154,13 +178,23 @@
             >
               <i class="bi bi-paperclip fs-5"></i>
             </button>
-            <input
-              type="text"
-              id="messageInput"
-              class="composer-input"
-              placeholder="Type a message or attach media"
-              autocomplete="off"
-            />
+
+            <div class="position-relative flex-grow-1 d-flex align-items-center overflow-hidden">
+              <div
+                id="ghostSuggestionOverlay"
+                class="position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center pointer-events-none text-truncate"
+                style="padding: 10px 16px; font-size: 0.95rem; pointer-events: none; white-space: pre; overflow: hidden;"
+              ></div>
+              <input
+                type="text"
+                id="messageInput"
+                class="composer-input w-100"
+                style="background: transparent; position: relative; z-index: 2;"
+                placeholder="Type a message (Press Tab to accept AI suggestion)..."
+                autocomplete="off"
+              />
+            </div>
+
             <button type="submit" id="sendBtn" class="send-btn" title="Send">
               <i class="bi bi-send-fill"></i>
             </button>
@@ -169,44 +203,45 @@
       </section>
     </div>
 
+    <!-- Create Group Modal -->
     <div
       id="createGroupModal"
       class="d-none position-fixed top-0 start-0 w-100 h-100 align-items-center justify-content-center"
-      style="background: rgba(11, 20, 26, 0.55); z-index: 1050;"
+      style="background: rgba(11, 20, 26, 0.45); z-index: 1050;"
     >
-      <div class="bg-white rounded-3 p-4 shadow" style="width: 92%; max-width: 420px;">
+      <div class="bg-white rounded-3 p-4 shadow" style="width: 92%; max-width: 400px;">
         <div class="d-flex align-items-center justify-content-between mb-3">
-          <h5 class="mb-0 fw-semibold">Create New Group</h5>
+          <h6 class="mb-0 fw-bold">Create New Group</h6>
           <button type="button" class="icon-btn" id="closeCreateGroupBtn">
             <i class="bi bi-x-lg"></i>
           </button>
         </div>
         <form id="createGroupForm">
           <div class="mb-3">
-            <label class="form-label">Group Name</label>
+            <label class="form-label small fw-semibold">Group Name</label>
             <input
               type="text"
               id="groupNameInput"
-              class="form-control"
+              class="form-control form-control-sm"
               placeholder="e.g., NIT Raipur Project Team"
               required
             />
           </div>
           <div class="mb-3">
-            <label class="form-label">Add Members by Email (comma separated)</label>
+            <label class="form-label small fw-semibold">Add Members by Email (comma separated)</label>
             <input
               type="text"
               id="groupMembersInput"
-              class="form-control"
+              class="form-control form-control-sm"
               placeholder="user1@gmail.com, user2@gmail.com"
             />
-            <div class="form-text">Only registered & verified users will be added.</div>
+            <div class="form-text" style="font-size: 11px;">Only registered & verified users will be added.</div>
           </div>
           <div class="d-flex justify-content-end gap-2">
-            <button type="button" class="btn btn-light" id="cancelCreateGroupBtn">
+            <button type="button" class="btn btn-sm btn-light" id="cancelCreateGroupBtn">
               Cancel
             </button>
-            <button type="submit" class="btn text-white" style="background-color: #00a884;">
+            <button type="submit" class="btn btn-sm text-white" style="background-color: #00a884;">
               Create Group
             </button>
           </div>
@@ -214,22 +249,60 @@
       </div>
     </div>
 
+    <!-- Clean Compact Group Members Modal with Admin Kick Control -->
     <div
       id="groupMembersModal"
       class="d-none position-fixed top-0 start-0 w-100 h-100 align-items-center justify-content-center"
-      style="background: rgba(11, 20, 26, 0.55); z-index: 1050;"
+      style="background: rgba(11, 20, 26, 0.45); z-index: 1050;"
     >
-      <div class="bg-white rounded-3 p-4 shadow" style="width: 92%; max-width: 420px;">
-        <div class="d-flex align-items-center justify-content-between mb-3">
+      <div class="bg-white rounded-3 p-3 shadow" style="width: 90%; max-width: 390px;">
+        <div class="d-flex align-items-center justify-content-between pb-2 mb-2 border-bottom">
           <div>
-            <h5 class="mb-0 fw-semibold" id="modalGroupName">Group Info</h5>
+            <h6 class="mb-0 fw-bold" id="modalGroupName">Group Info</h6>
             <small class="text-muted" id="modalGroupCount">0 members</small>
           </div>
           <button type="button" class="icon-btn" id="closeGroupMembersBtn">
             <i class="bi bi-x-lg"></i>
           </button>
         </div>
-        <div id="groupMembersList" style="max-height: 280px; overflow-y: auto;"></div>
+        <div id="groupMembersList" style="max-height: 250px; overflow-y: auto;"></div>
+      </div>
+    </div>
+
+    <!-- Delete Message Options Modal -->
+    <div
+      id="deleteMessageModal"
+      class="d-none position-fixed top-0 start-0 w-100 h-100 align-items-center justify-content-center"
+      style="background: rgba(11, 20, 26, 0.45); z-index: 1060;"
+    >
+      <div class="bg-white rounded-3 p-3 shadow" style="width: 88%; max-width: 340px;">
+        <h6 class="fw-bold mb-1">Delete Message?</h6>
+        <p class="text-muted small mb-3" id="deleteModalHint">
+          Choose how you want to delete this message.
+        </p>
+        <div class="d-grid gap-2">
+          <button
+            type="button"
+            class="btn btn-sm btn-danger"
+            id="confirmDeleteEveryoneBtn"
+          >
+            Delete for Everyone
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm btn-outline-secondary"
+            id="confirmDeleteMeBtn"
+          >
+            Delete for Me
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm btn-light"
+            id="cancelDeleteModalBtn"
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
 

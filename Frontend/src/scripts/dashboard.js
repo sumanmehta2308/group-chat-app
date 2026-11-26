@@ -4,13 +4,18 @@ import { getCurrentUser, logoutUser } from "../api/authApi.js";
 import {
   fetchAllMessages,
   postChatMessage,
+  deleteChatMessageApi,
   fetchUsersList,
   verifyUserEmail,
   fetchUserGroups,
   createNewGroup,
+  removeMemberFromGroupApi,
+  fetchAiSmartRepliesApi,
+  fetchAiPredictiveApi,
 } from "../api/chatApi.js";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 
 const currentUserAvatar = document.getElementById("currentUserAvatar");
 const currentUserName = document.getElementById("currentUserName");
@@ -36,6 +41,11 @@ const mobileBackBtn = document.getElementById("mobileBackBtn");
 const globalRoomItem = document.getElementById("globalRoomItem");
 const chatAppShell = document.querySelector(".chat-app-shell");
 
+const aiSuggestionsBar = document.getElementById("aiSuggestionsBar");
+const aiBarLabel = document.getElementById("aiBarLabel");
+const aiStyleSelect = document.getElementById("aiStyleSelect");
+const aiChipsContainer = document.getElementById("aiChipsContainer");
+
 const attachMediaBtn = document.getElementById("attachMediaBtn");
 const mediaFileInput = document.getElementById("mediaFileInput");
 const selectedFileBar = document.getElementById("selectedFileBar");
@@ -45,6 +55,7 @@ const selectedFilePreviewThumb = document.getElementById(
   "selectedFilePreviewThumb"
 );
 const selectedFileMeta = document.getElementById("selectedFileMeta");
+
 const openCreateGroupBtn = document.getElementById("openCreateGroupBtn");
 const createGroupModal = document.getElementById("createGroupModal");
 const closeCreateGroupBtn = document.getElementById("closeCreateGroupBtn");
@@ -59,6 +70,17 @@ const modalGroupName = document.getElementById("modalGroupName");
 const modalGroupCount = document.getElementById("modalGroupCount");
 const groupMembersList = document.getElementById("groupMembersList");
 
+const deleteMessageModal = document.getElementById("deleteMessageModal");
+const deleteModalHint = document.getElementById("deleteModalHint");
+const confirmDeleteEveryoneBtn = document.getElementById(
+  "confirmDeleteEveryoneBtn"
+);
+const confirmDeleteMeBtn = document.getElementById("confirmDeleteMeBtn");
+const cancelDeleteModalBtn = document.getElementById("cancelDeleteModalBtn");
+const ghostSuggestionOverlay = document.getElementById(
+  "ghostSuggestionOverlay"
+);
+let currentGhostCompletion = "";
 let currentUser = null;
 let userGroups = [];
 let recentContacts = [];
@@ -67,9 +89,11 @@ let allMessages = [];
 let selectedUser = null;
 let selectedGroup = null;
 let selectedFile = null;
+let messagePendingDelete = null;
 let currentRoomId = "global_group";
 let socket = null;
 let typingTimeout = null;
+let aiPredictDebounce = null;
 let searchDebounce = null;
 
 function createPrivateRoomIdByEmail(email1, email2) {
@@ -99,14 +123,81 @@ function scrollToBottom() {
   scrollBottomBtn.classList.add("d-none");
 }
 
+function getRecentContextForAi() {
+  return allMessages
+    .filter((m) => !m.isDeletedForEveryone && m.content)
+    .slice(-6)
+    .map((m) => ({
+      sender:
+        Number(m.senderId) === Number(currentUser?.id)
+          ? "Me"
+          : m.sender?.name || "Contact",
+      text: m.content,
+    }));
+}
+
+async function triggerSmartReplies() {
+  const context = getRecentContextForAi();
+  if (context.length === 0) {
+    hideAiBar();
+    return;
+  }
+  const latest = context[context.length - 1];
+  if (latest.sender === "Me") {
+    hideAiBar();
+    return;
+  }
+
+  try {
+    const res = await fetchAiSmartRepliesApi(context, aiStyleSelect.value);
+    if (res.success && Array.isArray(res.replies)) {
+      renderAiChips(res.replies, "reply");
+    }
+  } catch {
+    // Silent fallback if AI quota is unavailable
+  }
+}
+
+function triggerPredictiveTyping() {
+  clearTimeout(aiPredictDebounce);
+  const partialText = messageInput.value;
+
+  if (!partialText || partialText.trim().length < 2) {
+    triggerSmartReplies();
+    return;
+  }
+
+  aiPredictDebounce = setTimeout(async () => {
+    aiBarLabel.textContent = "Gemini thinking...";
+    aiSuggestionsBar.classList.remove("d-none");
+
+    try {
+      const res = await fetchAiPredictiveApi(
+        partialText,
+        getRecentContextForAi(),
+        aiStyleSelect.value
+      );
+      if (
+        res.success &&
+        Array.isArray(res.suggestions) &&
+        res.suggestions.length > 0
+      ) {
+        renderAiChips(res.suggestions, "predict");
+      } else {
+        hideAiBar();
+      }
+    } catch {
+      hideAiBar();
+    }
+  }, 250);
+}
+
 function getDefaultStatusText() {
   if (selectedGroup) {
-    return `${
-      selectedGroup.memberCount || 1
-    } members • Click header to view members`;
+    return `${selectedGroup.memberCount || 1} members • Click header for info`;
   }
   if (selectedUser) {
-    return `${selectedUser.email} • Room: ${currentRoomId}`;
+    return `${selectedUser.email}`;
   }
   return currentUser
     ? `Connected as ${currentUser.name}`
@@ -114,11 +205,15 @@ function getDefaultStatusText() {
 }
 
 function getMessageTickHtml(msg) {
+  if (msg.isDeletedForEveryone) return "";
+  if (String(msg.id).startsWith("temp_")) {
+    return `<i class="bi bi-clock msg-status-icon" title="Sending..."></i>`;
+  }
   if (!selectedGroup && !selectedUser) {
     return `<i class="bi bi-check2-all msg-status-icon seen"></i>`;
   }
   if (msg.isRead) {
-    return `<i class="bi bi-check2-all msg-status-icon seen" title="Seen by all"></i>`;
+    return `<i class="bi bi-check2-all msg-status-icon seen" title="Seen"></i>`;
   }
   if (msg.isDelivered) {
     return `<i class="bi bi-check2-all msg-status-icon" title="Delivered"></i>`;
@@ -127,7 +222,7 @@ function getMessageTickHtml(msg) {
 }
 
 function renderMediaContentHtml(msg) {
-  if (!msg.mediaUrl) return "";
+  if (!msg.mediaUrl || msg.isDeletedForEveryone) return "";
   const safeUrl = escapeHtml(msg.mediaUrl);
   const safeName = escapeHtml(msg.fileName || "Attachment");
 
@@ -139,7 +234,7 @@ function renderMediaContentHtml(msg) {
             src="${safeUrl}"
             alt="${safeName}"
             class="img-fluid rounded"
-            style="max-height: 240px; object-fit: cover; cursor: pointer;"
+            style="max-height: 230px; object-fit: cover; cursor: pointer;"
           />
         </a>
       </div>
@@ -153,7 +248,7 @@ function renderMediaContentHtml(msg) {
           src="${safeUrl}"
           controls
           class="rounded w-100"
-          style="max-height: 240px;"
+          style="max-height: 230px;"
         ></video>
       </div>
     `;
@@ -296,7 +391,9 @@ function upsertRecentContact(
   if (!user) return;
   const existingIndex = recentContacts.findIndex((u) => u.id === user.id);
   const previewLabel = lastMessageObj
-    ? lastMessageObj.content || `📎 ${lastMessageObj.fileName || "Media"}`
+    ? lastMessageObj.isDeletedForEveryone
+      ? "🚫 Message deleted"
+      : lastMessageObj.content || `📎 ${lastMessageObj.fileName || "Media"}`
     : null;
 
   if (existingIndex !== -1) {
@@ -341,10 +438,70 @@ function updateGroupSidebarPreview() {
   const senderPrefix = isOutgoing
     ? "You: "
     : `${last.sender?.name || "User"}: `;
-  const bodyPreview = last.content || `📎 ${last.fileName || "Media"}`;
+  const bodyPreview = last.isDeletedForEveryone
+    ? "🚫 Message deleted"
+    : last.content || `📎 ${last.fileName || "Media"}`;
   sidebarLastPreview.textContent = `${senderPrefix}${bodyPreview}`;
   sidebarLastTime.textContent = formatTimestamp(last.createdAt);
 }
+
+function openDeleteModalForMessage(msg) {
+  messagePendingDelete = msg;
+  const isMine = Number(msg.senderId) === Number(currentUser.id);
+
+  if (isMine && !msg.isDeletedForEveryone) {
+    confirmDeleteEveryoneBtn.classList.remove("d-none");
+    deleteModalHint.textContent =
+      "Delete this message for everyone in the chat or only for yourself.";
+  } else {
+    confirmDeleteEveryoneBtn.classList.add("d-none");
+    deleteModalHint.textContent = "Remove this message from your chat view.";
+  }
+
+  deleteMessageModal.classList.remove("d-none");
+  deleteMessageModal.classList.add("d-flex");
+}
+
+function closeDeleteModal() {
+  messagePendingDelete = null;
+  deleteMessageModal.classList.add("d-none");
+  deleteMessageModal.classList.remove("d-flex");
+}
+
+confirmDeleteMeBtn.addEventListener("click", async () => {
+  if (!messagePendingDelete) return;
+  const targetId = messagePendingDelete.id;
+  closeDeleteModal();
+  try {
+    await deleteChatMessageApi(targetId, "me");
+    allMessages = allMessages.filter((m) => Number(m.id) !== Number(targetId));
+    renderMessages();
+  } catch (err) {
+    alert(err.message || "Failed to delete message");
+  }
+});
+
+confirmDeleteEveryoneBtn.addEventListener("click", async () => {
+  if (!messagePendingDelete) return;
+  const targetId = messagePendingDelete.id;
+  closeDeleteModal();
+  try {
+    await deleteChatMessageApi(targetId, "everyone");
+    const target = allMessages.find((m) => Number(m.id) === Number(targetId));
+    if (target) {
+      target.isDeletedForEveryone = true;
+      target.content = "🚫 This message was deleted";
+      target.mediaUrl = null;
+      target.mediaType = null;
+      target.fileName = null;
+      renderMessages();
+    }
+  } catch (err) {
+    alert(err.message || "Failed to delete for everyone");
+  }
+});
+
+cancelDeleteModalBtn.addEventListener("click", closeDeleteModal);
 
 function renderMessages() {
   if (allMessages.length === 0) {
@@ -358,7 +515,7 @@ function renderMessages() {
 
   messagesContainer.innerHTML = allMessages
     .map((msg) => {
-      const isOutgoing = msg.senderId === currentUser.id;
+      const isOutgoing = Number(msg.senderId) === Number(currentUser.id);
       const rowClass = isOutgoing ? "outgoing" : "incoming";
       const senderHtml =
         !isOutgoing && !selectedUser
@@ -367,26 +524,41 @@ function renderMessages() {
             )}</div>`
           : "";
       const mediaHtml = renderMediaContentHtml(msg);
-      const textHtml = msg.content
+      const textContent = msg.isDeletedForEveryone
+        ? `<span class="msg-text fst-italic text-muted">🚫 This message was deleted</span>`
+        : msg.content
         ? `<span class="msg-text">${escapeHtml(msg.content)}</span>`
         : "";
       const tickHtml = isOutgoing ? getMessageTickHtml(msg) : "";
+      const deleteTriggerHtml = !String(msg.id).startsWith("temp_")
+        ? `<button type="button" class="btn btn-sm p-0 ms-2 text-muted delete-msg-trigger" data-msg-id="${msg.id}" title="Delete message" style="line-height: 1; opacity: 0.75;"><i class="bi bi-trash3" style="font-size: 11px;"></i></button>`
+        : "";
 
       return `
         <div class="msg-row ${rowClass}">
           <div class="msg-bubble">
             ${senderHtml}
             ${mediaHtml}
-            ${textHtml}
+            ${textContent}
             <span class="msg-meta">
               <span>${escapeHtml(formatTimestamp(msg.createdAt))}</span>
               ${tickHtml}
+              ${deleteTriggerHtml}
             </span>
           </div>
         </div>
       `;
     })
     .join("");
+
+  messagesContainer.querySelectorAll(".delete-msg-trigger").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const msgId = Number(btn.dataset.msgId);
+      const msgObj = allMessages.find((m) => Number(m.id) === msgId);
+      if (msgObj) openDeleteModalForMessage(msgObj);
+    });
+  });
 
   scrollToBottom();
 }
@@ -398,10 +570,10 @@ function isMessageForActiveChat(message) {
   if (selectedUser) {
     return (
       !message.groupId &&
-      ((message.senderId === currentUser.id &&
-        message.receiverId === selectedUser.id) ||
-        (message.senderId === selectedUser.id &&
-          message.receiverId === currentUser.id))
+      ((Number(message.senderId) === Number(currentUser.id) &&
+        Number(message.receiverId) === Number(selectedUser.id)) ||
+        (Number(message.senderId) === Number(selectedUser.id) &&
+          Number(message.receiverId) === Number(currentUser.id)))
     );
   }
   return message.receiverId === null && message.groupId === null;
@@ -424,23 +596,46 @@ function emitMarkGroupAsRead(groupId) {
   }
 }
 
+// Strict Deduplication Guard prevents double messages from HTTP + Socket race
 function appendIncomingMessage(message) {
   if (!isMessageForActiveChat(message)) return;
 
-  const alreadyExists = allMessages.some((m) => m.id === message.id);
-  if (alreadyExists) return;
+  if (message.clientTempId) {
+    const tempIdx = allMessages.findIndex(
+      (m) => String(m.id) === String(message.clientTempId)
+    );
+    if (tempIdx !== -1) {
+      allMessages[tempIdx] = message;
+      updateGroupSidebarPreview();
+      renderMessages();
+      return;
+    }
+  }
+
+  const existingIdx = allMessages.findIndex(
+    (m) => Number(m.id) === Number(message.id)
+  );
+  if (existingIdx !== -1) {
+    allMessages[existingIdx] = message;
+    renderMessages();
+    return;
+  }
 
   allMessages.push(message);
   updateGroupSidebarPreview();
   renderMessages();
 
-  if (selectedGroup && message.senderId !== currentUser.id) {
+  if (selectedGroup && Number(message.senderId) !== Number(currentUser.id)) {
     emitMarkGroupAsRead(selectedGroup.id);
+    triggerSmartReplies();
   } else if (selectedUser) {
     upsertRecentContact(selectedUser, message, false);
-    if (message.senderId === selectedUser.id) {
+    if (Number(message.senderId) === Number(selectedUser.id)) {
       emitMarkAsRead(currentRoomId, selectedUser.id);
+      triggerSmartReplies();
     }
+  } else if (Number(message.senderId) !== Number(currentUser.id)) {
+    triggerSmartReplies();
   }
 }
 
@@ -539,36 +734,62 @@ function openGroupMembersModal() {
   if (!selectedGroup) return;
   modalGroupName.textContent = selectedGroup.name;
   const members = selectedGroup.members || [];
+  const amIAdmin = Number(selectedGroup.createdBy) === Number(currentUser.id);
   modalGroupCount.textContent = `${members.length} members`;
 
   groupMembersList.innerHTML = members
     .map((m) => {
-      const isAdmin = Number(m.id) === Number(selectedGroup.createdBy);
+      const isMemberAdmin = Number(m.id) === Number(selectedGroup.createdBy);
       const isYou = Number(m.id) === Number(currentUser.id);
+
+      let rightActionHtml = "";
+      if (isMemberAdmin) {
+        rightActionHtml = `<span class="badge bg-success-subtle text-success border border-success-subtle">Admin</span>`;
+      } else if (amIAdmin) {
+        rightActionHtml = `<button type="button" class="btn btn-sm btn-outline-danger py-0 px-2 remove-member-btn" data-member-id="${m.id}" style="font-size: 11px;">Remove</button>`;
+      }
+
       return `
-        <div class="d-flex align-items-center justify-content-between py-2 border-bottom">
+        <div class="d-flex align-items-center justify-content-between py-2 border-bottom gap-2">
           <div class="d-flex align-items-center gap-2 overflow-hidden">
-            <div class="chat-avatar" style="width: 36px; height: 36px; font-size: 14px;">
+            <div class="chat-avatar flex-shrink-0" style="width: 34px; height: 34px; font-size: 13px;">
               ${escapeHtml(m.name.charAt(0).toUpperCase())}
             </div>
             <div class="overflow-hidden">
               <div class="fw-semibold small text-truncate">
                 ${escapeHtml(m.name)} ${isYou ? "(You)" : ""}
               </div>
-              <div class="text-muted text-truncate" style="font-size: 12px;">
+              <div class="text-muted text-truncate" style="font-size: 11px;">
                 ${escapeHtml(m.email)}
               </div>
             </div>
           </div>
-          ${
-            isAdmin
-              ? `<span class="badge bg-success-subtle text-success border border-success-subtle">Admin</span>`
-              : ""
-          }
+          <div class="flex-shrink-0">${rightActionHtml}</div>
         </div>
       `;
     })
     .join("");
+
+  groupMembersList.querySelectorAll(".remove-member-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const memberId = Number(btn.dataset.memberId);
+      if (!confirm("Remove this member from the group?")) return;
+      try {
+        btn.disabled = true;
+        await removeMemberFromGroupApi(selectedGroup.id, memberId);
+        selectedGroup.members = (selectedGroup.members || []).filter(
+          (m) => Number(m.id) !== memberId
+        );
+        selectedGroup.memberCount = selectedGroup.members.length;
+        activeChatStatus.textContent = getDefaultStatusText();
+        renderUsersSidebar();
+        openGroupMembersModal();
+      } catch (err) {
+        alert(err.message || "Failed to remove member");
+        btn.disabled = false;
+      }
+    });
+  });
 
   groupMembersModal.classList.remove("d-none");
   groupMembersModal.classList.add("d-flex");
@@ -626,6 +847,44 @@ function connectSocket() {
     }
   });
 
+  socket.on("group_member_removed", ({ groupId, removedUserId }) => {
+    if (Number(removedUserId) === Number(currentUser.id)) {
+      userGroups = userGroups.filter((g) => Number(g.id) !== Number(groupId));
+      renderUsersSidebar();
+      if (selectedGroup && Number(selectedGroup.id) === Number(groupId)) {
+        closeGroupMembersModal();
+        selectGlobalGroupChat();
+      }
+      return;
+    }
+
+    const targetGroup = userGroups.find(
+      (g) => Number(g.id) === Number(groupId)
+    );
+    if (targetGroup && targetGroup.members) {
+      targetGroup.members = targetGroup.members.filter(
+        (m) => Number(m.id) !== Number(removedUserId)
+      );
+      targetGroup.memberCount = targetGroup.members.length;
+      renderUsersSidebar();
+      if (selectedGroup && Number(selectedGroup.id) === Number(groupId)) {
+        activeChatStatus.textContent = getDefaultStatusText();
+      }
+    }
+  });
+
+  socket.on("message_deleted_everyone", ({ messageId }) => {
+    const target = allMessages.find((m) => Number(m.id) === Number(messageId));
+    if (target) {
+      target.isDeletedForEveryone = true;
+      target.content = "🚫 This message was deleted";
+      target.mediaUrl = null;
+      target.mediaType = null;
+      target.fileName = null;
+      renderMessages();
+    }
+  });
+
   socket.on(
     "group_message_status_updated",
     ({ messageId, groupId, isDelivered, isRead }) => {
@@ -643,7 +902,7 @@ function connectSocket() {
   socket.on("messages_delivered", ({ roomId }) => {
     if (roomId !== currentRoomId) return;
     allMessages.forEach((m) => {
-      if (m.senderId === currentUser.id) {
+      if (Number(m.senderId) === Number(currentUser.id)) {
         m.isDelivered = true;
       }
     });
@@ -653,7 +912,7 @@ function connectSocket() {
   socket.on("messages_read", ({ roomId }) => {
     if (roomId !== currentRoomId) return;
     allMessages.forEach((m) => {
-      if (m.senderId === currentUser.id) {
+      if (Number(m.senderId) === Number(currentUser.id)) {
         m.isDelivered = true;
         m.isRead = true;
       }
@@ -671,7 +930,7 @@ function connectSocket() {
   });
 
   socket.on("contact_updated", async (message) => {
-    if (selectedUser && message.senderId === selectedUser.id) {
+    if (selectedUser && Number(message.senderId) === Number(selectedUser.id)) {
       return;
     }
 
@@ -683,7 +942,7 @@ function connectSocket() {
   });
 
   socket.on("user_typing", (data) => {
-    if (data.userId === currentUser.id) return;
+    if (Number(data.userId) === Number(currentUser.id)) return;
     if (
       selectedGroup &&
       data.isGroup &&
@@ -726,6 +985,7 @@ async function loadMessages(filter = {}) {
       allMessages = res.messages || [];
       updateGroupSidebarPreview();
       renderMessages();
+      triggerSmartReplies();
     }
   } catch (err) {
     console.error("Failed to load messages:", err.message);
@@ -830,7 +1090,18 @@ chatSearchInput.addEventListener("input", (e) => {
   }, 300);
 });
 
+aiStyleSelect.addEventListener("change", () => {
+  if (messageInput.value.trim().length >= 2) {
+    triggerPredictiveTyping();
+  } else {
+    triggerSmartReplies();
+  }
+});
+
 messageInput.addEventListener("input", () => {
+  updateGhostOverlay("", "");
+  triggerPredictiveTyping();
+
   if (!socket || !socket.connected) return;
 
   if (selectedGroup) {
@@ -854,76 +1125,11 @@ messageInput.addEventListener("input", () => {
   }, 1200);
 });
 
-messageForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const content = messageInput.value.trim();
-  if (!content && !selectedFile) return;
-
-  const fileToSend = selectedFile;
-  const tempId = `temp_${Date.now()}`;
-  const optimisticUrl = fileToSend ? URL.createObjectURL(fileToSend) : null;
-  const optimisticType = fileToSend
-    ? fileToSend.type.startsWith("image/")
-      ? "image"
-      : fileToSend.type.startsWith("video/")
-      ? "video"
-      : "file"
-    : null;
-
-  const optimisticMsg = {
-    id: tempId,
-    senderId: currentUser.id,
-    receiverId: selectedUser ? selectedUser.id : null,
-    groupId: selectedGroup ? selectedGroup.id : null,
-    content,
-    mediaUrl: optimisticUrl,
-    mediaType: optimisticType,
-    fileName: fileToSend ? fileToSend.name : null,
-    isDelivered: false,
-    isRead: false,
-    createdAt: new Date().toISOString(),
-    sender: {
-      id: currentUser.id,
-      name: currentUser.name,
-      email: currentUser.email,
-    },
-  };
-
-  allMessages.push(optimisticMsg);
-  renderMessages();
-  messageInput.value = "";
-  clearSelectedMedia();
-
-  try {
-    if (socket && socket.connected) {
-      if (selectedGroup) {
-        socket.emit("group_stop_typing", { groupId: selectedGroup.id });
-      } else if (selectedUser) {
-        socket.emit("private_stop_typing", { roomId: currentRoomId });
-      } else {
-        socket.emit("stop_typing");
-      }
-    }
-
-    const res = await postChatMessage(content, {
-      receiverId: selectedUser ? selectedUser.id : null,
-      groupId: selectedGroup ? selectedGroup.id : null,
-      file: fileToSend,
-    });
-
-    allMessages = allMessages.filter((m) => m.id !== tempId);
-    if (res.success && res.message) {
-      appendIncomingMessage(res.message);
-      if (selectedUser) {
-        upsertRecentContact(selectedUser, res.message, false);
-      }
-    }
-  } catch (err) {
-    allMessages = allMessages.filter((m) => m.id !== tempId);
-    renderMessages();
-    alert(err.message || "Failed to send message");
-  } finally {
-    messageInput.focus();
+messageInput.addEventListener("keydown", (e) => {
+  if (e.key === "Tab" && currentGhostCompletion) {
+    e.preventDefault();
+    messageInput.value = `${messageInput.value}${currentGhostCompletion} `;
+    hideAiBar();
   }
 });
 
@@ -1000,7 +1206,86 @@ logoutBtn.addEventListener("click", async () => {
   }
   window.location.replace("/src/pages/login.html");
 });
+function updateGhostOverlay(userText, suggestionText) {
+  if (!ghostSuggestionOverlay) return;
+  if (!userText || !suggestionText) {
+    currentGhostCompletion = "";
+    ghostSuggestionOverlay.innerHTML = "";
+    return;
+  }
 
+  const needsSpace = userText.length > 0 && !userText.endsWith(" ");
+  const formattedAddition = `${needsSpace ? " " : ""}${suggestionText}`;
+  currentGhostCompletion = formattedAddition;
+
+  ghostSuggestionOverlay.innerHTML = `<span style="color: transparent;">${escapeHtml(
+    userText
+  )}</span><span style="color: #9ca3af;">${escapeHtml(
+    formattedAddition
+  )} <kbd style="font-size:10px; background:#f3f4f6; color:#6b7280; border:1px solid #d1d5db; padding:1px 4px; border-radius:3px;">Tab ⇥</kbd></span>`;
+}
+
+function hideAiBar() {
+  aiSuggestionsBar.classList.add("d-none");
+  aiChipsContainer.innerHTML = "";
+  updateGhostOverlay("", "");
+}
+
+function renderAiChips(items, mode = "reply") {
+  if (!items || items.length === 0) {
+    hideAiBar();
+    return;
+  }
+
+  if (mode === "predict") {
+    updateGhostOverlay(messageInput.value, items[0]);
+  } else {
+    updateGhostOverlay("", "");
+  }
+
+  aiBarLabel.textContent =
+    mode === "predict"
+      ? "Smart Compose (Press Tab to complete or tap an option)"
+      : "Smart Replies (Tap to reply)";
+
+  aiChipsContainer.innerHTML = items
+    .map(
+      (text) => `
+      <button
+        type="button"
+        class="btn btn-sm rounded-pill border px-2 py-0 ai-chip-btn"
+        style="font-size: 12px; background-color: #f0fdf4; color: #065f46; border-color: #bbf7d0;"
+        data-ai-mode="${mode}"
+        data-ai-text="${escapeHtml(text)}"
+      >
+        ${escapeHtml(text)}
+      </button>
+    `
+    )
+    .join("");
+
+  aiSuggestionsBar.classList.remove("d-none");
+
+  aiChipsContainer.querySelectorAll(".ai-chip-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const chipText = btn.dataset.aiText;
+      const chipMode = btn.dataset.aiMode;
+      if (chipMode === "predict") {
+        const currentVal = messageInput.value;
+        const needsSpace = currentVal.length > 0 && !currentVal.endsWith(" ");
+        messageInput.value = `${currentVal}${
+          needsSpace ? " " : ""
+        }${chipText} `;
+        updateGhostOverlay("", "");
+        messageInput.focus();
+      } else {
+        messageInput.value = chipText;
+        hideAiBar();
+        messageInput.focus();
+      }
+    });
+  });
+}
 async function initDashboard() {
   try {
     const res = await getCurrentUser();

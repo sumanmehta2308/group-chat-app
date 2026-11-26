@@ -41,3 +41,9 @@ export const getIO = () => {
   }
   return io;
 };
+export const isUserOnline = (ioInstance, userId) => {
+  const activeIo = ioInstance || io;
+  if (!activeIo || !userId) return false;
+  const userRoom = activeIo.sockets.adapter.rooms.get(`user_${Number(userId)}`);
+  return Boolean(userRoom && userRoom.size > 0);
+};
