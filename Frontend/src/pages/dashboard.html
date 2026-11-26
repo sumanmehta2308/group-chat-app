@@ -104,17 +104,38 @@
           <i class="bi bi-chevron-down"></i>
         </button>
 
-        <div
+     <div
           id="selectedFileBar"
-          class="d-none px-3 py-2 bg-light border-top d-flex align-items-center justify-content-between"
+          class="d-none px-3 py-2 bg-white border-top shadow-sm"
+          style="border-left: 4px solid #00a884;"
         >
-          <div class="small text-truncate text-dark">
-            <i class="bi bi-paperclip me-1 text-success"></i>
-            <span id="selectedFileName">file.png</span>
+          <div class="d-flex align-items-center justify-content-between gap-3">
+            <div class="d-flex align-items-center gap-3 overflow-hidden">
+              <div
+                id="selectedFilePreviewThumb"
+                class="rounded d-flex align-items-center justify-content-center bg-light border flex-shrink-0"
+                style="width: 52px; height: 52px; overflow: hidden;"
+              >
+                <i class="bi bi-file-earmark-text-fill fs-4 text-success"></i>
+              </div>
+              <div class="overflow-hidden">
+                <div class="fw-semibold small text-dark text-truncate" id="selectedFileName">
+                  file.png
+                </div>
+                <div class="text-muted" style="font-size: 11px;" id="selectedFileMeta">
+                  Ready to send
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              class="btn btn-sm btn-light rounded-circle text-danger"
+              id="clearSelectedFileBtn"
+              title="Remove attachment"
+            >
+              <i class="bi bi-x-lg"></i>
+            </button>
           </div>
-          <button type="button" class="btn btn-sm text-danger p-0" id="clearSelectedFileBtn">
-            <i class="bi bi-x-circle-fill"></i>
-          </button>
         </div>
 
         <footer class="chat-composer">

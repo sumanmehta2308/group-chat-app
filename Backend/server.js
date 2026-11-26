@@ -9,7 +9,9 @@ import "./src/models/group.js";
 import "./src/models/groupMember.js";
 import "./src/models/message.js";
 import "./src/models/groupMessageReceipt.js";
+import "./src/models/archivedChat.js";
 import { initSocket } from "./src/socket-io/index.js";
+import { startArchiveCronJob } from "./src/jobs/archiveChatsCron.js";
 
 const PORT = process.env.PORT || 3000;
 const server = http.createServer(app);
@@ -20,6 +22,7 @@ sequelize
   .sync({ alter: true })
   .then(() => {
     console.log("MySQL Database connected & synced successfully.");
+    startArchiveCronJob();
     server.listen(PORT, () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });
@@ -27,5 +30,3 @@ sequelize
   .catch((err) => {
     console.error("Database connection failed:", err);
   });
-
-  

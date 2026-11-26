@@ -41,7 +41,10 @@ const mediaFileInput = document.getElementById("mediaFileInput");
 const selectedFileBar = document.getElementById("selectedFileBar");
 const selectedFileName = document.getElementById("selectedFileName");
 const clearSelectedFileBtn = document.getElementById("clearSelectedFileBtn");
-
+const selectedFilePreviewThumb = document.getElementById(
+  "selectedFilePreviewThumb"
+);
+const selectedFileMeta = document.getElementById("selectedFileMeta");
 const openCreateGroupBtn = document.getElementById("openCreateGroupBtn");
 const createGroupModal = document.getElementById("createGroupModal");
 const closeCreateGroupBtn = document.getElementById("closeCreateGroupBtn");
@@ -765,6 +768,18 @@ mediaFileInput.addEventListener("change", (e) => {
   if (!file) return;
   selectedFile = file;
   selectedFileName.textContent = file.name;
+  const sizeKB = (file.size / 1024).toFixed(1);
+  selectedFileMeta.textContent = `${file.type || "Document"} • ${sizeKB} KB`;
+
+  if (file.type.startsWith("image/")) {
+    const previewUrl = URL.createObjectURL(file);
+    selectedFilePreviewThumb.innerHTML = `<img src="${previewUrl}" alt="preview" style="width: 100%; height: 100%; object-fit: cover;" />`;
+  } else if (file.type.startsWith("video/")) {
+    selectedFilePreviewThumb.innerHTML = `<i class="bi bi-camera-video-fill fs-4 text-primary"></i>`;
+  } else {
+    selectedFilePreviewThumb.innerHTML = `<i class="bi bi-file-earmark-pdf-fill fs-4 text-danger"></i>`;
+  }
+
   selectedFileBar.classList.remove("d-none");
 });
 
@@ -844,9 +859,42 @@ messageForm.addEventListener("submit", async (e) => {
   const content = messageInput.value.trim();
   if (!content && !selectedFile) return;
 
-  try {
-    sendBtn.disabled = true;
+  const fileToSend = selectedFile;
+  const tempId = `temp_${Date.now()}`;
+  const optimisticUrl = fileToSend ? URL.createObjectURL(fileToSend) : null;
+  const optimisticType = fileToSend
+    ? fileToSend.type.startsWith("image/")
+      ? "image"
+      : fileToSend.type.startsWith("video/")
+      ? "video"
+      : "file"
+    : null;
 
+  const optimisticMsg = {
+    id: tempId,
+    senderId: currentUser.id,
+    receiverId: selectedUser ? selectedUser.id : null,
+    groupId: selectedGroup ? selectedGroup.id : null,
+    content,
+    mediaUrl: optimisticUrl,
+    mediaType: optimisticType,
+    fileName: fileToSend ? fileToSend.name : null,
+    isDelivered: false,
+    isRead: false,
+    createdAt: new Date().toISOString(),
+    sender: {
+      id: currentUser.id,
+      name: currentUser.name,
+      email: currentUser.email,
+    },
+  };
+
+  allMessages.push(optimisticMsg);
+  renderMessages();
+  messageInput.value = "";
+  clearSelectedMedia();
+
+  try {
     if (socket && socket.connected) {
       if (selectedGroup) {
         socket.emit("group_stop_typing", { groupId: selectedGroup.id });
@@ -860,21 +908,21 @@ messageForm.addEventListener("submit", async (e) => {
     const res = await postChatMessage(content, {
       receiverId: selectedUser ? selectedUser.id : null,
       groupId: selectedGroup ? selectedGroup.id : null,
-      file: selectedFile,
+      file: fileToSend,
     });
 
+    allMessages = allMessages.filter((m) => m.id !== tempId);
     if (res.success && res.message) {
       appendIncomingMessage(res.message);
       if (selectedUser) {
         upsertRecentContact(selectedUser, res.message, false);
       }
-      messageInput.value = "";
-      clearSelectedMedia();
     }
   } catch (err) {
+    allMessages = allMessages.filter((m) => m.id !== tempId);
+    renderMessages();
     alert(err.message || "Failed to send message");
   } finally {
-    sendBtn.disabled = false;
     messageInput.focus();
   }
 });
