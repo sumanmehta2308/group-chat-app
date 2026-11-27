@@ -1050,7 +1050,87 @@ function clearSelectedMedia() {
 }
 
 clearSelectedFileBtn.addEventListener("click", clearSelectedMedia);
+messageForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
 
+  const content = messageInput.value.trim();
+  const fileToSend = selectedFile;
+
+  if (!content && !fileToSend) return;
+
+  const targetGroupId = selectedGroup ? Number(selectedGroup.id) : null;
+  const targetReceiverId =
+    !targetGroupId && selectedUser ? Number(selectedUser.id) : null;
+
+  const clientTempId = `temp_${Date.now()}`;
+  const tempMessage = {
+    id: clientTempId,
+    clientTempId,
+    senderId: Number(currentUser.id),
+    receiverId: targetReceiverId,
+    groupId: targetGroupId,
+    content,
+    mediaUrl: fileToSend ? URL.createObjectURL(fileToSend) : null,
+    mediaType: fileToSend
+      ? fileToSend.type.startsWith("image/")
+        ? "image"
+        : fileToSend.type.startsWith("video/")
+        ? "video"
+        : "file"
+      : null,
+    fileName: fileToSend ? fileToSend.name : null,
+    createdAt: new Date().toISOString(),
+    isDelivered: false,
+    isRead: false,
+    sender: {
+      id: currentUser.id,
+      name: currentUser.name,
+      email: currentUser.email,
+    },
+  };
+
+  allMessages.push(tempMessage);
+  updateGroupSidebarPreview();
+  renderMessages();
+
+  messageInput.value = "";
+  hideAiBar();
+  clearSelectedMedia();
+
+  if (socket && socket.connected) {
+    if (targetGroupId) {
+      socket.emit("group_stop_typing", { groupId: targetGroupId });
+    } else if (targetReceiverId) {
+      socket.emit("private_stop_typing", { roomId: currentRoomId });
+    } else {
+      socket.emit("stop_typing");
+    }
+  }
+
+  try {
+    sendBtn.disabled = true;
+    const res = await postChatMessage(content, {
+      receiverId: targetReceiverId,
+      groupId: targetGroupId,
+      file: fileToSend,
+      clientTempId,
+    });
+
+    if (res.success && res.message) {
+      appendIncomingMessage(res.message);
+      if (targetReceiverId && selectedUser) {
+        upsertRecentContact(selectedUser, res.message, false);
+      }
+    }
+  } catch (err) {
+    allMessages = allMessages.filter((m) => String(m.id) !== clientTempId);
+    renderMessages();
+    alert(err.message || "Failed to send message");
+  } finally {
+    sendBtn.disabled = false;
+    messageInput.focus();
+  }
+});
 directEmailJoinForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const email = chatSearchInput.value.trim();
